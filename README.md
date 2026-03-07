@@ -14,26 +14,30 @@ A real-time client–server chat app built with Java sockets, multithreading, an
 ## Project Structure
 ```
 ChatApp/
-  src/
-    main/
-      java/
-        chat/
-          client/
-            ChatClient.java
-            ChatFxApp.java
-            ChatUI.java
-            PromptDialogs.java
-          model/
-            Message.java
-          protocol/
-            Protocol.java
-          server/
-            ChatServer.java
-            ClientHandler.java
-      resources/
-        chat/
-          client/
-            chatfx.css
+├── src/
+│   └── main/
+│       ├── java/
+│       │   └── chat/
+│       │       ├── client/
+│       │       │   ├── ChatClient.java
+│       │       │   ├── ChatFxApp.java
+│       │       │   ├── ChatUI.java
+│       │       │   └── PromptDialogs.java
+│       │       │
+│       │       ├── model/
+│       │       │   └── Message.java
+│       │       │
+│       │       ├── protocol/
+│       │       │   └── Protocol.java
+│       │       │
+│       │       └── server/
+│       │           ├── ChatServer.java
+│       │           └── ClientHandler.java
+│       │
+│       └── resources/
+│           └── chat/
+│               └── client/
+│                   └── chatfx.css
 ```
 
 ## Run (Maven)
