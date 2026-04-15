@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 const POLL_MS = 2000;
 const USER_KEY = "chatapp.web.user";
@@ -7,6 +7,7 @@ const MODE_KEY = "chatapp.web.mode";
 const ROLE_KEY = "chatapp.web.role";
 const SOUND_MODE_KEY = "chatapp.web.soundMode";
 const LEFT_PANEL_WIDTH_KEY = "chatapp.web.leftPanelWidth";
+const THEME_KEY = "chatapp.web.theme";
 const TAB_INACTIVE_MS = 180_000;
 
 function roomCacheKey(room) {
@@ -68,6 +69,13 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     const value = Number(localStorage.getItem(LEFT_PANEL_WIDTH_KEY) || 300);
     return Number.isFinite(value) ? value : 300;
   });
+  const [theme, setTheme] = useState(() => {
+    const savedTheme = localStorage.getItem(THEME_KEY);
+    if (savedTheme === "dark" || savedTheme === "light") {
+      return savedTheme;
+    }
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
   const [activeResizer, setActiveResizer] = useState("");
   const [soundMode, setSoundMode] = useState(() => localStorage.getItem(SOUND_MODE_KEY) || "all");
   const [status, setStatus] = useState("Set your name and start or join a room.");
@@ -80,6 +88,9 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   const lastMessageIdRef = useRef("");
   const typingOffTimerRef = useRef(null);
   const attachmentInputRef = useRef(null);
+  const isFetchingMessagesRef = useRef(false);
+
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const memberDirectory = useMemo(() => {
     const users = new Map();
@@ -110,7 +121,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   const participantCount = memberDirectory.length;
 
   const filteredMessages = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const query = deferredSearchQuery.trim().toLowerCase();
     if (!query) {
       return messages;
     }
@@ -128,7 +139,11 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       ];
       return haystacks.some((value) => String(value || "").toLowerCase().includes(query));
     });
-  }, [messages, searchQuery]);
+  }, [messages, deferredSearchQuery]);
+
+  function toggleTheme() {
+    setTheme((current) => (current === "dark" ? "light" : "dark"));
+  }
 
   function memberRole(memberName) {
     const normalized = String(memberName || "").toLowerCase();
@@ -374,61 +389,70 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   }
 
   async function fetchMessages() {
-    const headers = await authHeaders();
-    const response = await fetch(
-      `/api/messages?room=${encodeURIComponent(room)}&user=${encodeURIComponent(user)}`,
-      {
-        cache: "no-store",
-        headers
+    if (isFetchingMessagesRef.current) {
+      return;
+    }
+
+    isFetchingMessagesRef.current = true;
+    try {
+      const headers = await authHeaders();
+      const response = await fetch(
+        `/api/messages?room=${encodeURIComponent(room)}&user=${encodeURIComponent(user)}`,
+        {
+          cache: "no-store",
+          headers
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Unable to load messages (${response.status})`);
       }
-    );
 
-    if (!response.ok) {
-      throw new Error(`Unable to load messages (${response.status})`);
-    }
+      const payload = await response.json();
+      const nextMessages = payload.messages || [];
 
-    const payload = await response.json();
-    const nextMessages = payload.messages || [];
+      if (payload.access && payload.access.banned) {
+        leaveRoom(false, "You are banned from this room.");
+        return;
+      }
+      if (payload.access && payload.access.kicked) {
+        leaveRoom(false, "You were kicked from this room.");
+        return;
+      }
 
-    if (payload.access && payload.access.banned) {
-      leaveRoom(false, "You are banned from this room.");
-      return;
-    }
-    if (payload.access && payload.access.kicked) {
-      leaveRoom(false, "You were kicked from this room.");
-      return;
-    }
+      setMessages(nextMessages);
+      setOnlineUsers(payload.onlineUsers || []);
+      setTypingUsers(payload.typingUsers || []);
+      setModerationInfo(payload.moderation || {
+        roles: {},
+        muted: [],
+        mutedUntil: {},
+        banned: [],
+        bannedUntil: {},
+        kicked: [],
+        log: []
+      });
+      if (room) {
+        localStorage.setItem(roomCacheKey(room), JSON.stringify(nextMessages));
+      }
+      setStorage(payload.storage || "memory");
+      if (payload.roomHost) {
+        localStorage.setItem(ROLE_KEY, payload.roomHost === user ? "host" : String(payload.myRole || role));
+      }
 
-    setMessages(nextMessages);
-    setOnlineUsers(payload.onlineUsers || []);
-    setTypingUsers(payload.typingUsers || []);
-    setModerationInfo(payload.moderation || {
-      roles: {},
-      muted: [],
-      mutedUntil: {},
-      banned: [],
-      bannedUntil: {},
-      kicked: [],
-      log: []
-    });
-    if (room) {
-      localStorage.setItem(roomCacheKey(room), JSON.stringify(nextMessages));
-    }
-    setStorage(payload.storage || "memory");
-    if (payload.roomHost) {
-      localStorage.setItem(ROLE_KEY, payload.roomHost === user ? "host" : String(payload.myRole || role));
-    }
+      if (payload.myRole) {
+        setRole(String(payload.myRole));
+      }
 
-    if (payload.myRole) {
-      setRole(String(payload.myRole));
-    }
-
-    if (payload.storage === "memory") {
-      applyStatus("Connected in temporary memory mode. Add KV in Vercel for persistence.", "warn");
-    } else if (payload.access && payload.access.muted) {
-      applyStatus("You are muted in this room.", "warn");
-    } else {
-      applyStatus(`Connected as ${user} in room ${room}`);
+      if (payload.storage === "memory") {
+        applyStatus("Connected in temporary memory mode. Add KV in Vercel for persistence.", "warn");
+      } else if (payload.access && payload.access.muted) {
+        applyStatus("You are muted in this room.", "warn");
+      } else {
+        applyStatus(`Connected as ${user} in room ${room}`);
+      }
+    } finally {
+      isFetchingMessagesRef.current = false;
     }
   }
 
@@ -468,23 +492,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       }
     } catch (error) {
       // Silent typing failures should not break chat.
-    }
-  }
-
-  async function sendMessage(nextText) {
-    const headers = await authHeaders();
-    const response = await fetch("/api/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...headers
-      },
-      body: JSON.stringify({ user, room, role, text: nextText, attachments: pendingAttachments })
-    });
-
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.error || `Send failed (${response.status})`);
     }
   }
 
@@ -641,6 +648,11 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   useEffect(() => {
     localStorage.setItem(SOUND_MODE_KEY, soundMode);
   }, [soundMode]);
+
+  useEffect(() => {
+    localStorage.setItem(THEME_KEY, theme);
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
   useEffect(() => {
     localStorage.setItem(LEFT_PANEL_WIDTH_KEY, String(Math.round(leftPanelWidth)));
@@ -884,15 +896,15 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     await startRoom(nextRoom, "host");
   }
 
-  function handleJoinRoom() {
-    startRoom(roomInput, "join");
+  async function handleJoinRoom() {
+    await startRoom(roomInput, "join");
   }
 
-  function handleRejoinLastRoom() {
+  async function handleRejoinLastRoom() {
     if (!savedUser || !savedRoom) {
       return;
     }
-    startRoom(savedRoom, savedMode, savedUser);
+    await startRoom(savedRoom, savedMode, savedUser);
   }
 
   async function copyRoomCode() {
@@ -942,6 +954,9 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       <div className="orb orb-b" />
 
       <main className="shell">
+        <button type="button" className="theme-toggle" onClick={toggleTheme}>
+          {theme === "dark" ? "Light Mode" : "Dark Mode"}
+        </button>
         {!isReady ? (
           <section className="entry-panel">
             <h1>ChatApp</h1>
