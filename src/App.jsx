@@ -8,6 +8,7 @@ const ROLE_KEY = "chatapp.web.role";
 const SOUND_MODE_KEY = "chatapp.web.soundMode";
 const LEFT_PANEL_WIDTH_KEY = "chatapp.web.leftPanelWidth";
 const REACTION_OPTIONS = ["👍", "❤️", "😂", "🎉", "🔥", "👏"];
+const TAB_INACTIVE_MS = 180_000;
 
 function roomCacheKey(room) {
   return `chatapp.web.room.messages.${room}`;
@@ -73,6 +74,11 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   const [status, setStatus] = useState("Set your name and start or join a room.");
   const [statusMode, setStatusMode] = useState("");
   const [storage, setStorage] = useState("memory");
+  const chatLayoutRef = useRef(null);
+  const messagesRef = useRef(null);
+  const inactivityTimerRef = useRef(null);
+  const hasLoadedMessagesRef = useRef(false);
+  const lastMessageIdRef = useRef("");
 
   const memberDirectory = useMemo(() => {
     const users = new Map();
