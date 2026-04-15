@@ -1,27 +1,19 @@
-# Java
-*.class
-*.jar
-*.war
-*.ear
-*.log
-
 # IDEs
 .idea/
 .vscode/
 *.iml
-.classpath
-.project
-.settings/
+
+# Node / Vercel
+node_modules/
+.vercel/
+.env
+.env.*
+*.log
 
 # OS
 .DS_Store
 Thumbs.db
 
 # Build
-out/
-/out-vscode/
-/bin/
-/target/
-
-# Tooling
-/.github/java-upgrade/
+dist/
+build/
