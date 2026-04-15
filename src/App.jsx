@@ -47,7 +47,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   const [mode, setMode] = useState(() => localStorage.getItem(MODE_KEY) || "join");
   const [role, setRole] = useState(() => localStorage.getItem(ROLE_KEY) || "member");
   const [isReady, setIsReady] = useState(false);
-  const [autoRejoinSeconds, setAutoRejoinSeconds] = useState(() => (savedUser && savedRoom ? 3 : 0));
   const [messages, setMessages] = useState([]);
   const [selectedTarget, setSelectedTarget] = useState("");
   const [text, setText] = useState("");
@@ -104,6 +103,9 @@ export default function App({ authRequired = false, authUser = null, getToken = 
 
     return [...users.values()].sort((a, b) => a.localeCompare(b));
   }, [messages, moderationInfo, onlineUsers]);
+
+  const participantList = memberDirectory;
+  const participantCount = memberDirectory.length;
 
   const filteredMessages = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -302,7 +304,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     setMode(nextMode);
     setRole(nextRole);
     setIsReady(true);
-    setAutoRejoinSeconds(0);
     localStorage.setItem(USER_KEY, cleanedName);
     localStorage.setItem(ROOM_KEY, cleanedRoom);
     localStorage.setItem(MODE_KEY, nextMode);
@@ -634,22 +635,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   }, [contextMenu.visible]);
 
   useEffect(() => {
-    if (isReady || !savedUser || !savedRoom || autoRejoinSeconds <= 0) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      if (autoRejoinSeconds === 1) {
-        startRoom(savedRoom, savedMode, savedUser);
-      } else {
-        setAutoRejoinSeconds((current) => current - 1);
-      }
-    }, 1000);
-
-    return () => window.clearTimeout(timer);
-  }, [autoRejoinSeconds, isReady, savedMode, savedRoom, savedUser]);
-
-  useEffect(() => {
     function clearInactivityTimer() {
       if (inactivityTimerRef.current) {
         window.clearTimeout(inactivityTimerRef.current);
@@ -836,7 +821,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     setReplyTo(null);
     closeContextMenu();
     setMessages([]);
-    setAutoRejoinSeconds(0);
     if (fromLifecycle) {
       applyStatus(customMessage || "Room session closed after inactivity.", "warn");
       return;
@@ -896,11 +880,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                 </p>
                 <div className="rejoin-actions">
                   <button className="entry-primary" type="button" onClick={handleRejoinLastRoom}>Rejoin Last Room</button>
-                  {autoRejoinSeconds > 0 ? (
-                    <button className="ghost-btn" type="button" onClick={() => setAutoRejoinSeconds(0)}>
-                      Cancel Auto Rejoin ({autoRejoinSeconds})
-                    </button>
-                  ) : null}
                 </div>
               </div>
             ) : null}
