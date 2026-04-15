@@ -1,4 +1,4 @@
-# ChatApp (React + Vercel)
+# ChatApp
 
 This repository now includes a Vercel-ready React chat app with serverless APIs.
 

@@ -1,8 +1,8 @@
 {
-  "name": "chatapp-web",
+  "name": "chatapp",
   "private": true,
   "version": "1.0.0",
-  "description": "Vercel-ready chat app built with React, Vite, and serverless functions.",
+  "description": "Vercel-ready ChatApp with serverless functions.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
