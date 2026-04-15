@@ -7,7 +7,6 @@ const MODE_KEY = "chatapp.web.mode";
 const ROLE_KEY = "chatapp.web.role";
 const SOUND_MODE_KEY = "chatapp.web.soundMode";
 const LEFT_PANEL_WIDTH_KEY = "chatapp.web.leftPanelWidth";
-const REACTION_OPTIONS = ["👍", "❤️", "😂", "🎉", "🔥", "👏"];
 const TAB_INACTIVE_MS = 180_000;
 
 function roomCacheKey(room) {
@@ -1162,10 +1161,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                       const canEdit = isMine && !message.deleted;
                       const canDelete = (isMine || role === "host") && !message.deleted;
                       const senderRole = memberRole(message.user);
-                      const reactionEntries = Object.entries(message.reactions || {})
-                        .map(([emoji, users]) => [emoji, Array.isArray(users) ? users : []])
-                        .filter(([, users]) => users.length)
-                        .sort((left, right) => REACTION_OPTIONS.indexOf(left[0]) - REACTION_OPTIONS.indexOf(right[0]));
 
                       return (
                         <article
@@ -1209,39 +1204,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                             </div>
                           ) : null}
                           <p className="text">{message.text}</p>
-                          <div className="reaction-row" aria-label="Message reactions">
-                            {reactionEntries.map(([emoji, users]) => {
-                              const reacted = users.some((reactionUser) => String(reactionUser || "").toLowerCase() === String(user || "").toLowerCase());
-                              return (
-                                <button
-                                  type="button"
-                                  key={emoji}
-                                  className={`reaction-chip ${reacted ? "active glowing" : ""}`.trim()}
-                                  onClick={() => performMessageAction("react", message, { reaction: emoji })}
-                                  title={`React with ${emoji}`}
-                                >
-                                  <span>{emoji}</span>
-                                  <span>{users.length}</span>
-                                </button>
-                              );
-                            })}
-                            <div className="reaction-palette" aria-label="Quick reactions">
-                              {REACTION_OPTIONS.map((emoji) => {
-                                const reacted = Array.isArray(message.reactions?.[emoji]) && message.reactions[emoji].some((reactionUser) => String(reactionUser || "").toLowerCase() === String(user || "").toLowerCase());
-                                return (
-                                  <button
-                                    type="button"
-                                    key={emoji}
-                                    className={`reaction-pick ${reacted ? "active glowing" : ""}`.trim()}
-                                    onClick={() => performMessageAction("react", message, { reaction: emoji })}
-                                    title={`Toggle ${emoji}`}
-                                  >
-                                    {emoji}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
                           {(canEdit || canDelete) ? (
                             <div className="message-actions">
                               {canEdit ? <button type="button" onClick={() => performMessageAction("edit", message)}>Edit</button> : null}
