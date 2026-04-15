@@ -189,6 +189,28 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [autoRejoinSeconds, isReady, savedMode, savedRoom, savedUser]);
 
+  useEffect(() => {
+    function handlePageHide() {
+      if (isReady) {
+        leaveRoom(true);
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (document.hidden && isReady) {
+        leaveRoom(true);
+      }
+    }
+
+    window.addEventListener("pagehide", handlePageHide);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [isReady]);
+
   async function onSubmit(event) {
     event.preventDefault();
 
@@ -235,12 +257,17 @@ export default function App() {
     }
   }
 
-  function leaveRoom() {
+  function leaveRoom(fromLifecycle = false) {
     localStorage.removeItem(ROOM_KEY);
     setIsReady(false);
     setRoom("");
     setRoomInput("");
     setMessages([]);
+    setAutoRejoinSeconds(0);
+    if (fromLifecycle) {
+      applyStatus("You left the room because the tab was hidden or closed.", "warn");
+      return;
+    }
     applyStatus("Choose another room.");
   }
 
