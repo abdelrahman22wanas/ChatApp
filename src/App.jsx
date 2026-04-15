@@ -63,6 +63,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   });
   const [replyTo, setReplyTo] = useState(null);
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, message: null });
+  const [memberContextMenu, setMemberContextMenu] = useState({ visible: false, x: 0, y: 0, member: "" });
   const [searchQuery, setSearchQuery] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
@@ -605,6 +606,24 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     setContextMenu({ visible: false, x: 0, y: 0, message: null });
   }
 
+  function openMemberContextMenu(event, member, canOpen) {
+    if (!canOpen) {
+      return;
+    }
+    event.preventDefault();
+    closeContextMenu();
+    setMemberContextMenu({
+      visible: true,
+      x: event.clientX,
+      y: event.clientY,
+      member
+    });
+  }
+
+  function closeMemberContextMenu() {
+    setMemberContextMenu({ visible: false, x: 0, y: 0, member: "" });
+  }
+
   useEffect(() => {
     if (authRequired && authUser?.name) {
       const trustedName = String(authUser.name).trim().slice(0, 32);
@@ -742,11 +761,15 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       if (contextMenu.visible) {
         closeContextMenu();
       }
+      if (memberContextMenu.visible) {
+        closeMemberContextMenu();
+      }
     }
 
     function onEscape(event) {
       if (event.key === "Escape") {
         closeContextMenu();
+        closeMemberContextMenu();
       }
     }
 
@@ -756,7 +779,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("keydown", onEscape);
     };
-  }, [contextMenu.visible]);
+  }, [contextMenu.visible, memberContextMenu.visible]);
 
   useEffect(() => {
     function clearInactivityTimer() {
@@ -975,6 +998,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     setSelectedTarget("");
     setReplyTo(null);
     closeContextMenu();
+    closeMemberContextMenu();
     setMessages([]);
     clearPendingAttachments();
     if (fromLifecycle) {
@@ -1108,9 +1132,14 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                         const isBanned = (moderationInfo.banned || []).includes(normalizedMember);
                         const isKicked = (moderationInfo.kicked || []).includes(normalizedMember);
                         const canModerateTarget = !isSelf && roleCanModerate(role) && (role === "host" || currentMemberRole === "member");
+                        const canOpenMemberMenu = !isSelf && (canModerateTarget || roleCanManageRoles(role));
 
                         return (
-                          <article className="member-item" key={member}>
+                          <article
+                            className="member-item"
+                            key={member}
+                            onContextMenu={(event) => openMemberContextMenu(event, member, canOpenMemberMenu)}
+                          >
                             <div className="member-item-row">
                               <span className="member-name">{member}</span>
                               <span className={`role-badge ${currentMemberRole}`}>{currentMemberRole}</span>
@@ -1368,17 +1397,92 @@ export default function App({ authRequired = false, authUser = null, getToken = 
           ) : null}
           {roleCanModerate(role) && String(contextMenu.message.user || "").toLowerCase() !== String(user || "").toLowerCase() ? (
             <>
-              <button type="button" onClick={() => moderateWithOptionalDuration("mute", contextMenu.message.user)}>Mute User</button>
-              <button type="button" onClick={() => moderateUser("unmute", contextMenu.message.user)}>Unmute User</button>
-              <button type="button" onClick={() => moderateUser("kick", contextMenu.message.user)}>Kick User</button>
-              <button type="button" onClick={() => moderateUser("unkick", contextMenu.message.user)}>Unkick User</button>
-              {roleCanBan(role) ? <button type="button" onClick={() => moderateWithOptionalDuration("ban", contextMenu.message.user)}>Ban User</button> : null}
-              {roleCanBan(role) ? <button type="button" onClick={() => moderateUser("unban", contextMenu.message.user)}>Unban User</button> : null}
+              {(() => {
+                const target = String(contextMenu.message.user || "").toLowerCase();
+                const isMuted = (moderationInfo.muted || []).includes(target);
+                const isKicked = (moderationInfo.kicked || []).includes(target);
+                const isBanned = (moderationInfo.banned || []).includes(target);
+                return (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => isMuted ? moderateUser("unmute", contextMenu.message.user) : moderateWithOptionalDuration("mute", contextMenu.message.user)}
+                    >
+                      {isMuted ? "Unmute User" : "Mute User"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => isKicked ? moderateUser("unkick", contextMenu.message.user) : moderateUser("kick", contextMenu.message.user)}
+                    >
+                      {isKicked ? "Unkick User" : "Kick User"}
+                    </button>
+                    {roleCanBan(role) ? (
+                      <button
+                        type="button"
+                        onClick={() => isBanned ? moderateUser("unban", contextMenu.message.user) : moderateWithOptionalDuration("ban", contextMenu.message.user)}
+                      >
+                        {isBanned ? "Unban User" : "Ban User"}
+                      </button>
+                    ) : null}
+                  </>
+                );
+              })()}
               {roleCanManageRoles(role) ? <button type="button" onClick={() => moderateUser("setrole", contextMenu.message.user, { targetRole: "moderator" })}>Make Moderator</button> : null}
               {roleCanManageRoles(role) ? <button type="button" onClick={() => moderateUser("setrole", contextMenu.message.user, { targetRole: "cohost" })}>Make Co-host</button> : null}
               {roleCanManageRoles(role) ? <button type="button" onClick={() => moderateUser("clearrole", contextMenu.message.user)}>Set Member</button> : null}
             </>
           ) : null}
+        </menu>
+      ) : null}
+
+      {isReady && memberContextMenu.visible && memberContextMenu.member ? (
+        <menu
+          className="message-context-menu"
+          style={{ left: memberContextMenu.x, top: memberContextMenu.y }}
+        >
+          {(() => {
+            const targetMember = String(memberContextMenu.member || "");
+            const normalizedTarget = targetMember.toLowerCase();
+            const targetRole = memberRole(targetMember);
+            const canModerateTarget = normalizedTarget !== String(user || "").toLowerCase() && roleCanModerate(role) && (role === "host" || targetRole === "member");
+            const canManageTargetRole = normalizedTarget !== String(user || "").toLowerCase() && roleCanManageRoles(role);
+            const isMuted = (moderationInfo.muted || []).includes(normalizedTarget);
+            const isKicked = (moderationInfo.kicked || []).includes(normalizedTarget);
+            const isBanned = (moderationInfo.banned || []).includes(normalizedTarget);
+
+            return (
+              <>
+                <button type="button" onClick={() => closeMemberContextMenu()}>{targetMember}</button>
+                {canModerateTarget ? (
+                  <button
+                    type="button"
+                    onClick={() => isMuted ? moderateUser("unmute", targetMember) : moderateWithOptionalDuration("mute", targetMember)}
+                  >
+                    {isMuted ? "Unmute" : "Mute"}
+                  </button>
+                ) : null}
+                {canModerateTarget ? (
+                  <button
+                    type="button"
+                    onClick={() => isKicked ? moderateUser("unkick", targetMember) : moderateUser("kick", targetMember)}
+                  >
+                    {isKicked ? "Unkick" : "Kick"}
+                  </button>
+                ) : null}
+                {canModerateTarget && roleCanBan(role) ? (
+                  <button
+                    type="button"
+                    onClick={() => isBanned ? moderateUser("unban", targetMember) : moderateWithOptionalDuration("ban", targetMember)}
+                  >
+                    {isBanned ? "Unban" : "Ban"}
+                  </button>
+                ) : null}
+                {canManageTargetRole ? <button type="button" onClick={() => moderateUser("setrole", targetMember, { targetRole: "moderator" })}>Make Moderator</button> : null}
+                {canManageTargetRole ? <button type="button" onClick={() => moderateUser("setrole", targetMember, { targetRole: "cohost" })}>Make Co-host</button> : null}
+                {canManageTargetRole ? <button type="button" onClick={() => moderateUser("clearrole", targetMember)}>Set Member</button> : null}
+              </>
+            );
+          })()}
         </menu>
       ) : null}
     </>
