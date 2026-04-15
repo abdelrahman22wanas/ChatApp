@@ -64,6 +64,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   const [replyTo, setReplyTo] = useState(null);
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, message: null });
   const [searchQuery, setSearchQuery] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState([]);
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
     const value = Number(localStorage.getItem(LEFT_PANEL_WIDTH_KEY) || 300);
     return Number.isFinite(value) ? value : 300;
@@ -78,6 +79,8 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   const inactivityTimerRef = useRef(null);
   const hasLoadedMessagesRef = useRef(false);
   const lastMessageIdRef = useRef("");
+  const typingOffTimerRef = useRef(null);
+  const attachmentInputRef = useRef(null);
 
   const memberDirectory = useMemo(() => {
     const users = new Map();
@@ -141,6 +144,14 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       return mapped;
     }
     return "member";
+  }
+
+  function attachmentKind(attachment) {
+    const type = String(attachment?.type || "");
+    if (type.startsWith("image/")) return "image";
+    if (type.startsWith("video/")) return "video";
+    if (type.startsWith("audio/")) return "audio";
+    return "file";
   }
 
   function roleCanModerate(currentRole) {
@@ -216,6 +227,53 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     };
   }
 
+  function clearPendingAttachments() {
+    setPendingAttachments([]);
+    if (attachmentInputRef.current) {
+      attachmentInputRef.current.value = "";
+    }
+  }
+
+  function fileToAttachment(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        resolve({
+          name: file.name,
+          type: file.type || "application/octet-stream",
+          dataUrl: String(reader.result || ""),
+          size: file.size
+        });
+      };
+      reader.onerror = () => reject(new Error(`Unable to read ${file.name}`));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleAttachmentChange(event) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) {
+      setPendingAttachments([]);
+      return;
+    }
+
+    const maxFiles = 5;
+    const maxFileSize = 4 * 1024 * 1024;
+    const selectedFiles = files.slice(0, maxFiles).filter((file) => file.size <= maxFileSize);
+
+    if (selectedFiles.length !== files.length) {
+      applyStatus("Attachments are limited to 5 files and 4 MB each.", "warn");
+    }
+
+    try {
+      const encoded = await Promise.all(selectedFiles.map(fileToAttachment));
+      setPendingAttachments(encoded);
+    } catch (error) {
+      applyStatus(error.message, "error");
+      clearPendingAttachments();
+    }
+  }
+
   function playNotificationSound() {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -283,7 +341,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     }
   }
 
-  function startRoom(nextRoom, nextMode = "join", explicitName) {
+  async function startRoom(nextRoom, nextMode = "join", explicitName) {
     const cleanedName = String(explicitName ?? nameInput).trim().slice(0, 32);
     const cleanedRoom = normalizeRoom(nextRoom);
 
@@ -303,11 +361,16 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     setRoom(cleanedRoom);
     setMode(nextMode);
     setRole(nextRole);
-    setIsReady(true);
     localStorage.setItem(USER_KEY, cleanedName);
     localStorage.setItem(ROOM_KEY, cleanedRoom);
     localStorage.setItem(MODE_KEY, nextMode);
     localStorage.setItem(ROLE_KEY, nextRole);
+
+    if (nextMode === "host") {
+      await bootstrapHostRoom(cleanedRoom, cleanedName);
+    }
+
+    setIsReady(true);
     applyStatus(`Connected as ${cleanedName} in room ${cleanedRoom}`);
   }
 
@@ -353,6 +416,9 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       localStorage.setItem(roomCacheKey(room), JSON.stringify(nextMessages));
     }
     setStorage(payload.storage || "memory");
+    if (payload.roomHost) {
+      localStorage.setItem(ROLE_KEY, payload.roomHost === user ? "host" : String(payload.myRole || role));
+    }
 
     if (payload.myRole) {
       setRole(String(payload.myRole));
@@ -377,6 +443,13 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       });
       if (response.status === 403) {
         leaveRoom(false, "You no longer have access to this room.");
+        return;
+      }
+      if (response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        if (Array.isArray(payload.onlineUsers)) {
+          setOnlineUsers(payload.onlineUsers);
+        }
       }
     } catch (error) {
       // Silent presence failures should not break chat.
@@ -407,7 +480,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
         "Content-Type": "application/json",
         ...headers
       },
-      body: JSON.stringify({ user, room, role, text: nextText })
+      body: JSON.stringify({ user, room, role, text: nextText, attachments: pendingAttachments })
     });
 
     if (!response.ok) {
@@ -691,7 +764,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     event.preventDefault();
 
     const nextText = text.trim();
-    if (!nextText) {
+    if (!nextText && !pendingAttachments.length) {
       return;
     }
 
@@ -726,7 +799,10 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       const response = await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          ...payload,
+          attachments: pendingAttachments
+        })
       });
 
       if (!response.ok) {
@@ -736,6 +812,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
 
       await fetchMessages();
       setReplyTo(null);
+      clearPendingAttachments();
     } catch (error) {
       applyStatus(error.message, "error");
     }
@@ -777,8 +854,35 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     }
   }
 
-  function handleHostRoom() {
-    startRoom(randomRoomCode(), "host");
+  async function bootstrapHostRoom(roomCode, displayName) {
+    try {
+      const headers = await authHeaders();
+      const response = await fetch("/api/room", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ room: roomCode, user: displayName })
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json().catch(() => ({}));
+      if (payload.roomHost === displayName) {
+        setRole("host");
+        localStorage.setItem(ROLE_KEY, "host");
+      }
+      if (Array.isArray(payload.onlineUsers)) {
+        setOnlineUsers(payload.onlineUsers);
+      }
+    } catch (error) {
+      // Host bootstrap is best-effort so the room still opens.
+    }
+  }
+
+  async function handleHostRoom() {
+    const nextRoom = randomRoomCode();
+    await startRoom(nextRoom, "host");
   }
 
   function handleJoinRoom() {
@@ -821,6 +925,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     setReplyTo(null);
     closeContextMenu();
     setMessages([]);
+    clearPendingAttachments();
     if (fromLifecycle) {
       applyStatus(customMessage || "Room session closed after inactivity.", "warn");
       return;
@@ -1082,6 +1187,27 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                               <span>{message.replyTo.text || ""}</span>
                             </div>
                           ) : null}
+                          {Array.isArray(message.attachments) && message.attachments.length && !message.deleted ? (
+                            <div className="attachment-list">
+                              {message.attachments.map((attachment) => {
+                                const kind = attachmentKind(attachment);
+                                if (kind === "image") {
+                                  return <img className="attachment-media" key={attachment.name + attachment.dataUrl} src={attachment.dataUrl} alt={attachment.name} />;
+                                }
+                                if (kind === "video") {
+                                  return <video className="attachment-media" key={attachment.name + attachment.dataUrl} controls src={attachment.dataUrl} />;
+                                }
+                                if (kind === "audio") {
+                                  return <audio className="attachment-media" key={attachment.name + attachment.dataUrl} controls src={attachment.dataUrl} />;
+                                }
+                                return (
+                                  <a className="attachment-file" key={attachment.name + attachment.dataUrl} href={attachment.dataUrl} download={attachment.name} target="_blank" rel="noreferrer">
+                                    {attachment.name}
+                                  </a>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                           <p className="text">{message.text}</p>
                           <div className="reaction-row" aria-label="Message reactions">
                             {reactionEntries.map(([emoji, users]) => {
@@ -1090,7 +1216,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                                 <button
                                   type="button"
                                   key={emoji}
-                                  className={`reaction-chip ${reacted ? "active" : ""}`.trim()}
+                                  className={`reaction-chip ${reacted ? "active glowing" : ""}`.trim()}
                                   onClick={() => performMessageAction("react", message, { reaction: emoji })}
                                   title={`React with ${emoji}`}
                                 >
@@ -1106,7 +1232,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                                   <button
                                     type="button"
                                     key={emoji}
-                                    className={`reaction-pick ${reacted ? "active" : ""}`.trim()}
+                                    className={`reaction-pick ${reacted ? "active glowing" : ""}`.trim()}
                                     onClick={() => performMessageAction("react", message, { reaction: emoji })}
                                     title={`Toggle ${emoji}`}
                                   >
@@ -1139,6 +1265,18 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                         <button type="button" onClick={() => setReplyTo(null)}>Cancel</button>
                       </div>
                     ) : null}
+                    <div className="composer-attachments">
+                      <label className="attachment-button">
+                        Attach files
+                        <input
+                          ref={attachmentInputRef}
+                          type="file"
+                          multiple
+                          onChange={handleAttachmentChange}
+                        />
+                      </label>
+                      {pendingAttachments.length ? <span>{pendingAttachments.length} file{pendingAttachments.length === 1 ? "" : "s"} ready</span> : null}
+                    </div>
                     <input
                       type="text"
                       maxLength={500}
@@ -1156,7 +1294,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                         }, 1200);
                       }}
                       disabled={status.includes("muted")}
-                      required
+                      required={!pendingAttachments.length}
                     />
                     <button type="submit" disabled={status.includes("muted")}>Send</button>
                   </form>

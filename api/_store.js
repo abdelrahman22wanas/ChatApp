@@ -99,6 +99,25 @@ function normalizeMessages(messages) {
   return messages.slice(-MEMORY_LIMIT);
 }
 
+function normalizeAttachments(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.slice(0, 5).map((attachment) => {
+    const name = String(attachment && attachment.name ? attachment.name : "").trim().slice(0, 128);
+    const type = String(attachment && attachment.type ? attachment.type : "").trim().slice(0, 96);
+    const dataUrl = String(attachment && attachment.dataUrl ? attachment.dataUrl : "").trim();
+    const size = Math.max(0, Number(attachment && attachment.size ? attachment.size : 0));
+    return {
+      name,
+      type,
+      dataUrl,
+      size
+    };
+  }).filter((attachment) => attachment.name && attachment.dataUrl);
+}
+
 function normalizeReactions(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -365,6 +384,43 @@ async function writeRoomState(room, allStates, currentState) {
   await writeRoomStatesToKv(allStates);
 }
 
+async function claimRoomHost(payload) {
+  const room = normalizeRoom(payload.room);
+  const user = normalizeUser(payload.user);
+
+  if (!room || !user) {
+    return { ok: false, error: "room and user are required.", code: 400 };
+  }
+
+  const roomStateBundle = await readRoomState(room);
+  const state = roomStateBundle.current;
+  const access = hasAccess(state, user);
+
+  if (access.banned || access.kicked) {
+    delete state.presence[user];
+    delete state.typing[user];
+    await writeRoomState(room, roomStateBundle.all, state);
+    return {
+      ok: false,
+      code: 403,
+      error: access.banned ? "banned" : "kicked"
+    };
+  }
+
+  if (!state.host) {
+    state.host = user;
+  }
+
+  state.presence[user] = Date.now();
+  await writeRoomState(room, roomStateBundle.all, state);
+  return {
+    ok: true,
+    roomHost: state.host,
+    myRole: roleForUser(state, user),
+    onlineUsers: Object.keys(state.presence).sort()
+  };
+}
+
 function hasAccess(roomState, user) {
   const normalizedUser = normalizeUser(user);
   return {
@@ -495,6 +551,7 @@ async function appendMessage(message) {
         }
       : null,
     text: message.text,
+    attachments: normalizeAttachments(message.attachments),
     reactions: {},
     editedAt: "",
     deleted: false,
@@ -741,6 +798,7 @@ async function applyMessageAction(payload) {
 module.exports = {
   listMessages,
   appendMessage,
+  claimRoomHost,
   moderateRoom,
   setPresence,
   setTyping,

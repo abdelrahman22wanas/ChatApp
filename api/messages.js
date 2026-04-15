@@ -61,6 +61,14 @@ module.exports = async (req, res) => {
       const room = safeText(payload.room, 24).toLowerCase();
       const to = safeText(payload.to, 32);
       const text = safeText(payload.text, 500);
+      const attachments = Array.isArray(payload.attachments)
+        ? payload.attachments.slice(0, 5).map((attachment) => ({
+            name: safeText(attachment && attachment.name, 128),
+            type: safeText(attachment && attachment.type, 96),
+            dataUrl: safeText(attachment && attachment.dataUrl, 5_000_000),
+            size: Math.max(0, Number(attachment && attachment.size || 0))
+          })).filter((attachment) => attachment.name && attachment.dataUrl)
+        : [];
       const replyTo = payload.replyTo && typeof payload.replyTo === "object"
         ? {
             id: safeText(payload.replyTo.id, 64),
@@ -69,9 +77,9 @@ module.exports = async (req, res) => {
           }
         : null;
 
-      if (!user || !room || !text) {
+      if (!user || !room || (!text && attachments.length === 0)) {
         return json(res, 400, {
-          error: "User, room, and text are required."
+          error: "User, room, and a message or attachment are required."
         });
       }
 
@@ -83,6 +91,7 @@ module.exports = async (req, res) => {
         replyTo,
         authUserId: auth.userId || "",
         text,
+        attachments,
         ts: new Date().toISOString()
       });
 
