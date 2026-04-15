@@ -4,6 +4,7 @@ const POLL_MS = 2000;
 const USER_KEY = "chatapp.web.user";
 const ROOM_KEY = "chatapp.web.room";
 const MODE_KEY = "chatapp.web.mode";
+const ROLE_KEY = "chatapp.web.role";
 
 function roomCacheKey(room) {
   return `chatapp.web.room.messages.${room}`;
@@ -26,14 +27,18 @@ export default function App() {
   const [roomInput, setRoomInput] = useState("");
   const [room, setRoom] = useState(() => localStorage.getItem(ROOM_KEY) || "");
   const [mode, setMode] = useState(() => localStorage.getItem(MODE_KEY) || "join");
+  const [role, setRole] = useState(() => localStorage.getItem(ROLE_KEY) || "member");
   const [isReady, setIsReady] = useState(false);
   const [autoRejoinSeconds, setAutoRejoinSeconds] = useState(() => (savedUser && savedRoom ? 3 : 0));
   const [messages, setMessages] = useState([]);
+  const [selectedTarget, setSelectedTarget] = useState("");
   const [text, setText] = useState("");
   const [status, setStatus] = useState("Set your name and start or join a room.");
   const [statusMode, setStatusMode] = useState("");
   const [storage, setStorage] = useState("memory");
   const messagesRef = useRef(null);
+  const hasLoadedMessagesRef = useRef(false);
+  const lastMessageIdRef = useRef("");
 
   const participantCount = useMemo(() => {
     const participants = new Set();
@@ -48,9 +53,52 @@ export default function App() {
     return participants.size;
   }, [messages, user]);
 
+  const participantList = useMemo(() => {
+    const participants = new Map();
+    for (const message of messages) {
+      if (message.user) {
+        participants.set(String(message.user).toLowerCase(), message.user);
+      }
+    }
+    if (user) {
+      participants.set(String(user).toLowerCase(), user);
+    }
+    return [...participants.values()].sort((a, b) => a.localeCompare(b));
+  }, [messages, user]);
+
   function applyStatus(message, mode = "") {
     setStatus(message);
     setStatusMode(mode);
+  }
+
+  function playNotificationSound() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) {
+        return;
+      }
+
+      const ctx = new AudioCtx();
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+      gainNode.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + 0.01);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.2);
+
+      oscillator.onended = () => {
+        ctx.close().catch(() => {});
+      };
+    } catch (error) {
+      // Ignore sound failures to avoid interrupting chat flow.
+    }
   }
 
   function normalizeRoom(value) {
@@ -63,7 +111,21 @@ export default function App() {
   }
 
   function randomRoomCode() {
-    return Math.random().toString(36).slice(2, 8);
+    const alphabet = "23456789abcdefghjkmnpqrstuvwxyz";
+    const timePart = Date.now().toString(36).slice(-4);
+
+    try {
+      const bytes = new Uint8Array(8);
+      window.crypto.getRandomValues(bytes);
+      let randomPart = "";
+      for (const byte of bytes) {
+        randomPart += alphabet[byte % alphabet.length];
+      }
+      return `${timePart}${randomPart}`;
+    } catch (error) {
+      const fallback = (Math.random().toString(36) + Math.random().toString(36)).replace(/[^a-z0-9]/g, "").slice(0, 8);
+      return `${timePart}${fallback}`;
+    }
   }
 
   function startRoom(nextRoom, nextMode = "join", explicitName) {
@@ -80,14 +142,18 @@ export default function App() {
       return;
     }
 
+    const nextRole = nextMode === "host" ? "host" : "member";
+
     setUser(cleanedName);
     setRoom(cleanedRoom);
     setMode(nextMode);
+    setRole(nextRole);
     setIsReady(true);
     setAutoRejoinSeconds(0);
     localStorage.setItem(USER_KEY, cleanedName);
     localStorage.setItem(ROOM_KEY, cleanedRoom);
     localStorage.setItem(MODE_KEY, nextMode);
+    localStorage.setItem(ROLE_KEY, nextRole);
     applyStatus(`Connected as ${cleanedName} in room ${cleanedRoom}`);
   }
 
@@ -100,14 +166,31 @@ export default function App() {
 
     const payload = await response.json();
     const nextMessages = payload.messages || [];
+
+    if (payload.access && payload.access.banned) {
+      leaveRoom(false, "You are banned from this room.");
+      return;
+    }
+    if (payload.access && payload.access.kicked) {
+      leaveRoom(false, "You were kicked from this room.");
+      return;
+    }
+
     setMessages(nextMessages);
     if (room) {
       localStorage.setItem(roomCacheKey(room), JSON.stringify(nextMessages));
     }
     setStorage(payload.storage || "memory");
 
+    if (payload.roomHost) {
+      const normalizedCurrent = String(user || "").trim().toLowerCase();
+      setRole(normalizedCurrent && normalizedCurrent === String(payload.roomHost) ? "host" : "member");
+    }
+
     if (payload.storage === "memory") {
       applyStatus("Connected in temporary memory mode. Add KV in Vercel for persistence.", "warn");
+    } else if (payload.access && payload.access.muted) {
+      applyStatus("You are muted in this room.", "warn");
     } else {
       applyStatus(`Connected as ${user} in room ${room}`);
     }
@@ -119,13 +202,42 @@ export default function App() {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ user, room, text: nextText })
+      body: JSON.stringify({ user, room, role, text: nextText })
     });
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.error || `Send failed (${response.status})`);
     }
+  }
+
+  async function moderateUser(action) {
+    if (!selectedTarget) {
+      applyStatus("Select a participant first.", "warn");
+      return;
+    }
+
+    const response = await fetch("/api/moderation", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        room,
+        actor: user,
+        actorRole: role,
+        target: selectedTarget,
+        action
+      })
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || `Moderation failed (${response.status})`);
+    }
+
+    await fetchMessages();
+    applyStatus(`${action} action applied to ${selectedTarget}.`);
   }
 
   useEffect(() => {
@@ -170,6 +282,21 @@ export default function App() {
     const node = messagesRef.current;
     if (node) {
       node.scrollTop = node.scrollHeight;
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    const latestId = messages.length ? String(messages[messages.length - 1].id || "") : "";
+
+    if (!hasLoadedMessagesRef.current) {
+      hasLoadedMessagesRef.current = true;
+      lastMessageIdRef.current = latestId;
+      return;
+    }
+
+    if (latestId && latestId !== lastMessageIdRef.current) {
+      playNotificationSound();
+      lastMessageIdRef.current = latestId;
     }
   }, [messages]);
 
@@ -257,15 +384,22 @@ export default function App() {
     }
   }
 
-  function leaveRoom(fromLifecycle = false) {
+  function leaveRoom(fromLifecycle = false, customMessage) {
     localStorage.removeItem(ROOM_KEY);
+    localStorage.removeItem(ROLE_KEY);
     setIsReady(false);
     setRoom("");
+    setRole("member");
     setRoomInput("");
+    setSelectedTarget("");
     setMessages([]);
     setAutoRejoinSeconds(0);
     if (fromLifecycle) {
       applyStatus("You left the room because the tab was hidden or closed.", "warn");
+      return;
+    }
+    if (customMessage) {
+      applyStatus(customMessage, "warn");
       return;
     }
     applyStatus("Choose another room.");
@@ -334,7 +468,10 @@ export default function App() {
             <header className="topbar">
               <div>
                 <h1>ChatApp</h1>
-                <p>Room: {room} • {participantCount} participant{participantCount === 1 ? "" : "s"}</p>
+                <p>
+                  Room: {room} • {participantCount} participant{participantCount === 1 ? "" : "s"} • You are
+                  <span className={`role-badge ${role}`}>{role}</span>
+                </p>
               </div>
               <div className="topbar-actions">
                 {mode === "host" ? (
@@ -345,11 +482,32 @@ export default function App() {
             </header>
 
             <section className="chat-panel">
+              {role === "host" ? (
+                <div className="moderation-bar">
+                  <select
+                    className="moderation-select"
+                    value={selectedTarget}
+                    onChange={(event) => setSelectedTarget(event.target.value)}
+                  >
+                    <option value="">Select user...</option>
+                    {participantList
+                      .filter((participant) => participant.toLowerCase() !== String(user).toLowerCase())
+                      .map((participant) => (
+                        <option key={participant} value={participant}>{participant}</option>
+                      ))}
+                  </select>
+                  <button type="button" className="ghost-btn" onClick={() => moderateUser("mute")}>Mute</button>
+                  <button type="button" className="ghost-btn" onClick={() => moderateUser("kick")}>Kick</button>
+                  <button type="button" className="ghost-btn" onClick={() => moderateUser("ban")}>Ban</button>
+                </div>
+              ) : null}
+
               <div ref={messagesRef} className="messages" aria-live="polite" aria-label="Chat messages">
                 {messages.map((message) => (
                   <article className="bubble" key={message.id}>
                     <div className="meta">
                       <strong className="user">{message.user}</strong>
+                      <span className={`role-badge ${String(message.role || "member")}`}>{String(message.role || "member")}</span>
                       <span className="time">{formatTime(message.ts)}</span>
                     </div>
                     <p className="text">{message.text}</p>
@@ -361,13 +519,14 @@ export default function App() {
                 <input
                   type="text"
                   maxLength={500}
-                  placeholder="Write a message..."
+                  placeholder={status.includes("muted") ? "You are muted" : "Write a message..."}
                   autoComplete="off"
                   value={text}
                   onChange={(event) => setText(event.target.value)}
+                  disabled={status.includes("muted")}
                   required
                 />
-                <button type="submit">Send</button>
+                <button type="submit" disabled={status.includes("muted")}>Send</button>
               </form>
 
               <p className={`status ${statusMode}`.trim()}>

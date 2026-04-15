@@ -11,6 +11,14 @@ function safeText(value, max) {
   return String(value || "").trim().slice(0, max);
 }
 
+function normalizeRole(value) {
+  const role = safeText(value, 16).toLowerCase();
+  if (role === "host") {
+    return "host";
+  }
+  return "member";
+}
+
 function readRoomFromReq(req) {
   if (req.query && typeof req.query.room === "string") {
     return safeText(req.query.room, 24).toLowerCase();
@@ -24,11 +32,25 @@ function readRoomFromReq(req) {
   }
 }
 
+function readUserFromReq(req) {
+  if (req.query && typeof req.query.user === "string") {
+    return safeText(req.query.user, 32);
+  }
+
+  try {
+    const fullUrl = new URL(req.url, "http://localhost");
+    return safeText(fullUrl.searchParams.get("user"), 32);
+  } catch (error) {
+    return "";
+  }
+}
+
 module.exports = async (req, res) => {
   try {
     if (req.method === "GET") {
       const room = readRoomFromReq(req);
-      const result = await listMessages(room);
+      const user = readUserFromReq(req);
+      const result = await listMessages(room, user);
       return json(res, 200, result);
     }
 
@@ -37,6 +59,7 @@ module.exports = async (req, res) => {
 
       const user = safeText(payload.user, 32);
       const room = safeText(payload.room, 24).toLowerCase();
+      const role = normalizeRole(payload.role);
       const text = safeText(payload.text, 500);
 
       if (!user || !room || !text) {
@@ -49,9 +72,16 @@ module.exports = async (req, res) => {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         user,
         room,
+        role,
         text,
         ts: new Date().toISOString()
       });
+
+      if (result && result.denied) {
+        return json(res, 403, {
+          error: `Message blocked: ${result.denied}`
+        });
+      }
 
       return json(res, 201, result);
     }
