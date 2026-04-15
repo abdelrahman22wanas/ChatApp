@@ -1,4 +1,5 @@
 const { setTyping } = require("./_store");
+const { requireAuth } = require("./_auth");
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -17,10 +18,19 @@ module.exports = async (req, res) => {
   }
 
   try {
+    const auth = await requireAuth(req);
+    if (!auth.ok) {
+      return json(res, auth.status || 401, { error: auth.error || "Unauthorized" });
+    }
+
     const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
+    const user = auth.authEnabled
+      ? safeText(req.headers["x-auth-display-name"], 32) || `user-${String(auth.userId).slice(-6)}`
+      : safeText(payload.user, 32);
+
     const result = await setTyping({
       room: safeText(payload.room, 24),
-      user: safeText(payload.user, 32),
+      user,
       active: payload.active !== false
     });
 

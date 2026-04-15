@@ -1,4 +1,5 @@
 const { listMessages, appendMessage } = require("./_store");
+const { requireAuth } = require("./_auth");
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -9,14 +10,6 @@ function json(res, status, body) {
 
 function safeText(value, max) {
   return String(value || "").trim().slice(0, max);
-}
-
-function normalizeRole(value) {
-  const role = safeText(value, 16).toLowerCase();
-  if (role === "host") {
-    return "host";
-  }
-  return "member";
 }
 
 function readRoomFromReq(req) {
@@ -47,9 +40,15 @@ function readUserFromReq(req) {
 
 module.exports = async (req, res) => {
   try {
+    const auth = await requireAuth(req);
+    if (!auth.ok) {
+      return json(res, auth.status || 401, { error: auth.error || "Unauthorized" });
+    }
+
     if (req.method === "GET") {
       const room = readRoomFromReq(req);
-      const user = readUserFromReq(req);
+      const authDisplayName = safeText(req.headers["x-auth-display-name"], 32);
+      const user = auth.authEnabled ? authDisplayName || `user-${String(auth.userId).slice(-6)}` : readUserFromReq(req);
       const result = await listMessages(room, user);
       return json(res, 200, result);
     }
@@ -57,11 +56,18 @@ module.exports = async (req, res) => {
     if (req.method === "POST") {
       const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
 
-      const user = safeText(payload.user, 32);
+      const authDisplayName = safeText(req.headers["x-auth-display-name"], 32);
+      const user = auth.authEnabled ? authDisplayName || `user-${String(auth.userId).slice(-6)}` : safeText(payload.user, 32);
       const room = safeText(payload.room, 24).toLowerCase();
-      const role = normalizeRole(payload.role);
       const to = safeText(payload.to, 32);
       const text = safeText(payload.text, 500);
+      const replyTo = payload.replyTo && typeof payload.replyTo === "object"
+        ? {
+            id: safeText(payload.replyTo.id, 64),
+            user: safeText(payload.replyTo.user, 32),
+            text: safeText(payload.replyTo.text, 160)
+          }
+        : null;
 
       if (!user || !room || !text) {
         return json(res, 400, {
@@ -74,7 +80,8 @@ module.exports = async (req, res) => {
         user,
         to,
         room,
-        role,
+        replyTo,
+        authUserId: auth.userId || "",
         text,
         ts: new Date().toISOString()
       });

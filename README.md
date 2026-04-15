@@ -45,5 +45,22 @@ If KV variables are not configured, chat runs in temporary memory mode and messa
 ## Deploy Notes
 Vercel will build the React app from `npm run build` and serve the `dist` output.
 
+## Enterprise Feature Stack (Selected)
+- Auth: Clerk (email + OAuth)
+- Realtime: Ably
+- Upload + scan: Vercel Blob + VirusTotal
+- Analytics/Error tracking: PostHog + Sentry
+
+### Required Environment Variables
+Use `.env.stack.example` as the complete template for production setup.
+
+### Implementation Order (Safe Rollout)
+1. Add Clerk auth gate and server-side token validation.
+2. Add room password/token and host/co-host transfer controls.
+3. Replace polling with Ably realtime channels for room events.
+4. Add upload pipeline with Blob signed URLs + VirusTotal scan state.
+5. Enable moderation center export + timed actions (mute/ban/unkick).
+6. Enable analytics dashboards and error tracing with Sentry.
+
 ## Legacy Java Desktop Code
 The JavaFX/Swing client-server implementation still exists in this repository under `src/` and can be kept as legacy reference. It is not required for Vercel deployment.

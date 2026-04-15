@@ -148,6 +148,30 @@ body {
   font-size: 2rem;
 }
 
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.auth-card-web {
+  width: min(100%, 520px);
+  border: 1px solid var(--line);
+  background: var(--glass);
+  border-radius: 18px;
+  padding: 22px;
+  backdrop-filter: blur(7px);
+  box-shadow: 0 24px 50px rgba(1, 8, 20, 0.45);
+}
+
+.auth-loading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+}
+
 .entry-subtitle {
   margin: 8px 0 18px;
   color: var(--subtext);
@@ -226,6 +250,70 @@ body {
   font-size: 0.82rem;
   color: var(--subtext);
   margin: 0 2px 8px;
+}
+
+.members-sidebar {
+  margin: 0 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 10px;
+}
+
+.members-sidebar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  color: var(--subtext);
+}
+
+.members-sidebar-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.member-item {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.member-item-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.member-name {
+  font-weight: 600;
+}
+
+.member-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.member-flag {
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #f8fafc;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.member-inline-actions,
+.member-role-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .presence-label {
@@ -317,6 +405,18 @@ body {
   color: #a7f3d0;
   background: rgba(5, 150, 105, 0.2);
   border-color: rgba(52, 211, 153, 0.35);
+}
+
+.role-badge.moderator {
+  color: #fde68a;
+  background: rgba(217, 119, 6, 0.22);
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+.role-badge.cohost {
+  color: #bfdbfe;
+  background: rgba(37, 99, 235, 0.22);
+  border-color: rgba(96, 165, 250, 0.45);
 }
 
 .meta .user {
@@ -445,6 +545,129 @@ body {
 .moderation-log ul {
   margin: 8px 0 0 16px;
   padding: 0;
+}
+
+.reply-preview {
+  margin: 4px 0 8px;
+  border-left: 3px solid rgba(255, 255, 255, 0.28);
+  padding-left: 8px;
+  display: grid;
+  gap: 2px;
+  opacity: 0.85;
+}
+
+.reply-preview strong {
+  font-size: 0.75rem;
+}
+
+.reply-preview span {
+  font-size: 0.77rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.replying-strip {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 0.86rem;
+}
+
+.replying-strip button {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.member-controls-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(1, 8, 20, 0.66);
+  display: grid;
+  place-items: center;
+  z-index: 30;
+  padding: 16px;
+}
+
+.member-controls-modal {
+  width: min(980px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(4, 15, 35, 0.95);
+  box-shadow: 0 20px 55px rgba(0, 0, 0, 0.45);
+  padding: 14px;
+}
+
+.member-controls-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.member-controls-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.member-controls-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.member-row {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.member-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.message-context-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 190px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(4, 15, 35, 0.96);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+  display: grid;
+  gap: 4px;
+}
+
+.message-context-menu button {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.message-context-menu button:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 @keyframes rise {

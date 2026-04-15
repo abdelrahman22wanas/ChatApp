@@ -32,7 +32,7 @@ function isMentionedMessage(text, username) {
   return mentionRegex.test(String(text || ""));
 }
 
-export default function App() {
+export default function App({ authRequired = false, authUser = null, getToken = null }) {
   const savedUser = localStorage.getItem(USER_KEY) || "";
   const savedRoom = localStorage.getItem(ROOM_KEY) || "";
   const savedMode = localStorage.getItem(MODE_KEY) || "join";
@@ -50,7 +50,18 @@ export default function App() {
   const [text, setText] = useState("");
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [typingUsers, setTypingUsers] = useState([]);
-  const [moderationInfo, setModerationInfo] = useState({ muted: [], banned: [], log: [] });
+  const [moderationInfo, setModerationInfo] = useState({
+    roles: {},
+    muted: [],
+    mutedUntil: {},
+    banned: [],
+    bannedUntil: {},
+    kicked: [],
+    log: []
+  });
+  const [replyTo, setReplyTo] = useState(null);
+  const [showMemberControls, setShowMemberControls] = useState(false);
+  const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, message: null });
   const [soundMode, setSoundMode] = useState(() => localStorage.getItem(SOUND_MODE_KEY) || "all");
   const [status, setStatus] = useState("Set your name and start or join a room.");
   const [statusMode, setStatusMode] = useState("");
@@ -63,35 +74,124 @@ export default function App() {
   const TAB_INACTIVE_MS = 3 * 60 * 1000;
   const typingOffTimerRef = useRef(null);
 
-  const participantCount = useMemo(() => {
-    const participants = new Set();
-    for (const message of messages) {
-      if (message.user) {
-        participants.add(String(message.user).toLowerCase());
-      }
-    }
-    if (user) {
-      participants.add(user.toLowerCase());
-    }
-    return participants.size;
-  }, [messages, user]);
+  const participantCount = useMemo(() => onlineUsers.length, [onlineUsers]);
 
   const participantList = useMemo(() => {
-    const participants = new Map();
-    for (const message of messages) {
-      if (message.user) {
-        participants.set(String(message.user).toLowerCase(), message.user);
+    return [...onlineUsers].sort((a, b) => a.localeCompare(b));
+  }, [onlineUsers]);
+
+  const memberDirectory = useMemo(() => {
+    const users = new Map();
+    for (const onlineUser of onlineUsers) {
+      if (onlineUser) {
+        users.set(String(onlineUser).toLowerCase(), onlineUser);
       }
     }
-    if (user) {
-      participants.set(String(user).toLowerCase(), user);
+    for (const message of messages) {
+      if (message.user) {
+        users.set(String(message.user).toLowerCase(), message.user);
+      }
     }
-    return [...participants.values()].sort((a, b) => a.localeCompare(b));
-  }, [messages, user]);
+    for (const mutedUser of moderationInfo.muted || []) {
+      users.set(String(mutedUser).toLowerCase(), mutedUser);
+    }
+    for (const bannedUser of moderationInfo.banned || []) {
+      users.set(String(bannedUser).toLowerCase(), bannedUser);
+    }
+    for (const kickedUser of moderationInfo.kicked || []) {
+      users.set(String(kickedUser).toLowerCase(), kickedUser);
+    }
+
+    const ordered = [...users.values()].sort((a, b) => a.localeCompare(b));
+    return ordered;
+  }, [messages, moderationInfo, onlineUsers]);
+
+  function memberRole(memberName) {
+    const normalized = String(memberName || "").toLowerCase();
+    if (!normalized) {
+      return "member";
+    }
+    if (normalized === String(user || "").toLowerCase()) {
+      return role;
+    }
+    const mapped = moderationInfo.roles?.[normalized];
+    if (mapped === "cohost" || mapped === "moderator") {
+      return mapped;
+    }
+    return "member";
+  }
+
+  function roleCanModerate(currentRole) {
+    return currentRole === "host" || currentRole === "cohost" || currentRole === "moderator";
+  }
+
+  function roleCanBan(currentRole) {
+    return currentRole === "host";
+  }
+
+  function roleCanManageRoles(currentRole) {
+    return currentRole === "host";
+  }
+
+  function parseDurationMs(actionName) {
+    const defaultMinutes = actionName === "ban" ? "60" : "10";
+    const input = window.prompt(
+      `Duration in minutes for ${actionName} (leave empty for permanent):`,
+      defaultMinutes
+    );
+    if (input === null) {
+      return null;
+    }
+    const trimmed = String(input).trim();
+    if (!trimmed) {
+      return 0;
+    }
+    const parsedMinutes = Number(trimmed);
+    if (!Number.isFinite(parsedMinutes) || parsedMinutes <= 0) {
+      applyStatus("Invalid duration. Enter a positive number of minutes.", "warn");
+      return null;
+    }
+    return Math.round(parsedMinutes * 60_000);
+  }
+
+  function formatRemaining(ts) {
+    const endTs = Number(ts || 0);
+    if (!endTs) {
+      return "";
+    }
+    const diff = endTs - Date.now();
+    if (diff <= 0) {
+      return "";
+    }
+    const totalMinutes = Math.ceil(diff / 60_000);
+    if (totalMinutes < 60) {
+      return `${totalMinutes}m left`;
+    }
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours}h ${minutes}m left`;
+  }
 
   function applyStatus(message, mode = "") {
     setStatus(message);
     setStatusMode(mode);
+  }
+
+  async function authHeaders() {
+    if (!authRequired || typeof getToken !== "function") {
+      return {};
+    }
+
+    const token = await getToken();
+    if (!token) {
+      return {};
+    }
+
+    return {
+      Authorization: `Bearer ${token}`,
+      "X-Auth-Display-Name": String(authUser?.name || "").slice(0, 32),
+      "X-Auth-User-Id": String(authUser?.id || "")
+    };
   }
 
   function playNotificationSound() {
@@ -191,9 +291,13 @@ export default function App() {
   }
 
   async function fetchMessages() {
+    const headers = await authHeaders();
     const response = await fetch(
       `/api/messages?room=${encodeURIComponent(room)}&user=${encodeURIComponent(user)}`,
-      { cache: "no-store" }
+      {
+        cache: "no-store",
+        headers
+      }
     );
 
     if (!response.ok) {
@@ -215,15 +319,22 @@ export default function App() {
     setMessages(nextMessages);
     setOnlineUsers(payload.onlineUsers || []);
     setTypingUsers(payload.typingUsers || []);
-    setModerationInfo(payload.moderation || { muted: [], banned: [], log: [] });
+    setModerationInfo(payload.moderation || {
+      roles: {},
+      muted: [],
+      mutedUntil: {},
+      banned: [],
+      bannedUntil: {},
+      kicked: [],
+      log: []
+    });
     if (room) {
       localStorage.setItem(roomCacheKey(room), JSON.stringify(nextMessages));
     }
     setStorage(payload.storage || "memory");
 
-    if (payload.roomHost) {
-      const normalizedCurrent = String(user || "").trim().toLowerCase();
-      setRole(normalizedCurrent && normalizedCurrent === String(payload.roomHost) ? "host" : "member");
+    if (payload.myRole) {
+      setRole(String(payload.myRole));
     }
 
     if (payload.storage === "memory") {
@@ -237,11 +348,15 @@ export default function App() {
 
   async function postPresence(active) {
     try {
-      await fetch("/api/presence", {
+      const headers = await authHeaders();
+      const response = await fetch("/api/presence", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({ room, user, active })
       });
+      if (response.status === 403) {
+        leaveRoom(false, "You no longer have access to this room.");
+      }
     } catch (error) {
       // Silent presence failures should not break chat.
     }
@@ -249,21 +364,27 @@ export default function App() {
 
   async function postTyping(active) {
     try {
-      await fetch("/api/typing", {
+      const headers = await authHeaders();
+      const response = await fetch("/api/typing", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({ room, user, active })
       });
+      if (response.status === 403) {
+        leaveRoom(false, "You no longer have access to this room.");
+      }
     } catch (error) {
       // Silent typing failures should not break chat.
     }
   }
 
   async function sendMessage(nextText) {
+    const headers = await authHeaders();
     const response = await fetch("/api/messages", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...headers
       },
       body: JSON.stringify({ user, room, role, text: nextText })
     });
@@ -274,23 +395,28 @@ export default function App() {
     }
   }
 
-  async function moderateUser(action) {
-    if (!selectedTarget) {
+  async function moderateUser(action, targetOverride, options = {}) {
+    closeContextMenu();
+    const targetUser = String(targetOverride || selectedTarget || "").trim();
+    if (!targetUser) {
       applyStatus("Select a participant first.", "warn");
       return;
     }
 
+    const headers = await authHeaders();
     const response = await fetch("/api/moderation", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...headers
       },
       body: JSON.stringify({
         room,
         actor: user,
-        actorRole: role,
-        target: selectedTarget,
-        action
+        target: targetUser,
+        action,
+        targetRole: options.targetRole || "",
+        durationMs: Number(options.durationMs || 0)
       })
     });
 
@@ -300,8 +426,54 @@ export default function App() {
     }
 
     await fetchMessages();
-    applyStatus(`${action} action applied to ${selectedTarget}.`);
+    applyStatus(`${action} action applied to ${targetUser}.`);
   }
+
+  async function moderateWithOptionalDuration(action, targetOverride) {
+    if (action !== "mute" && action !== "ban") {
+      await moderateUser(action, targetOverride);
+      return;
+    }
+
+    const durationMs = parseDurationMs(action);
+    if (durationMs === null) {
+      return;
+    }
+    await moderateUser(action, targetOverride, { durationMs });
+  }
+
+  function selectReplyTarget(message) {
+    setReplyTo({
+      id: message.id,
+      user: message.user,
+      text: String(message.text || "").slice(0, 160)
+    });
+    setContextMenu({ visible: false, x: 0, y: 0, message: null });
+  }
+
+  function openContextMenu(event, message) {
+    event.preventDefault();
+    setContextMenu({
+      visible: true,
+      x: event.clientX,
+      y: event.clientY,
+      message
+    });
+  }
+
+  function closeContextMenu() {
+    setContextMenu({ visible: false, x: 0, y: 0, message: null });
+  }
+
+  useEffect(() => {
+    if (authRequired && authUser?.name) {
+      const trustedName = String(authUser.name).trim().slice(0, 32);
+      if (trustedName && trustedName !== user) {
+        setUser(trustedName);
+        setNameInput(trustedName);
+      }
+    }
+  }, [authRequired, authUser, user]);
 
   useEffect(() => {
     if (!isReady || !room || !user) {
@@ -376,6 +548,27 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(SOUND_MODE_KEY, soundMode);
   }, [soundMode]);
+
+  useEffect(() => {
+    function onPointerDown() {
+      if (contextMenu.visible) {
+        closeContextMenu();
+      }
+    }
+
+    function onEscape(event) {
+      if (event.key === "Escape") {
+        closeContextMenu();
+      }
+    }
+
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onEscape);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [contextMenu.visible]);
 
   useEffect(() => {
     if (isReady || !savedUser || !savedRoom || autoRejoinSeconds <= 0) {
@@ -461,7 +654,8 @@ export default function App() {
       user,
       room,
       role,
-      text: nextText
+      text: nextText,
+      replyTo
     };
 
     if (nextText.toLowerCase().startsWith("/dm ")) {
@@ -480,9 +674,10 @@ export default function App() {
     }
 
     try {
+      const headers = await authHeaders();
       const response = await fetch("/api/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify(payload)
       });
 
@@ -492,6 +687,7 @@ export default function App() {
       }
 
       await fetchMessages();
+      setReplyTo(null);
     } catch (error) {
       applyStatus(error.message, "error");
     }
@@ -499,13 +695,13 @@ export default function App() {
 
   async function performMessageAction(action, message) {
     try {
+      const headers = await authHeaders();
       const response = await fetch("/api/message-action", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({
           room,
           actor: user,
-          actorRole: role,
           action,
           messageId: message.id,
           text: action === "edit" ? window.prompt("Edit message", message.text || "") || "" : ""
@@ -564,6 +760,9 @@ export default function App() {
     setRole("member");
     setRoomInput("");
     setSelectedTarget("");
+    setShowMemberControls(false);
+    setReplyTo(null);
+    closeContextMenu();
     setMessages([]);
     setAutoRejoinSeconds(0);
     if (fromLifecycle) {
@@ -597,6 +796,7 @@ export default function App() {
               placeholder="Your name"
               value={nameInput}
               onChange={(event) => setNameInput(event.target.value)}
+              disabled={authRequired}
             />
 
             <div className="entry-actions">
@@ -646,6 +846,9 @@ export default function App() {
                 </p>
               </div>
               <div className="topbar-actions">
+                {roleCanModerate(role) ? (
+                  <button className="ghost-btn" type="button" onClick={() => setShowMemberControls(true)}>Member Controls</button>
+                ) : null}
                 {mode === "host" ? (
                   <button className="ghost-btn" type="button" onClick={copyRoomCode}>Copy Room Code</button>
                 ) : null}
@@ -654,7 +857,7 @@ export default function App() {
             </header>
 
             <section className="chat-panel">
-              {role === "host" ? (
+              {roleCanModerate(role) ? (
                 <div className="moderation-bar">
                   <select
                     className="moderation-select"
@@ -668,11 +871,12 @@ export default function App() {
                         <option key={participant} value={participant}>{participant}</option>
                       ))}
                   </select>
-                  <button type="button" className="ghost-btn" onClick={() => moderateUser("mute")}>Mute</button>
+                  <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("mute")}>Mute</button>
                   <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute")}>Unmute</button>
                   <button type="button" className="ghost-btn" onClick={() => moderateUser("kick")}>Kick</button>
-                  <button type="button" className="ghost-btn" onClick={() => moderateUser("ban")}>Ban</button>
-                  <button type="button" className="ghost-btn" onClick={() => moderateUser("unban")}>Unban</button>
+                  <button type="button" className="ghost-btn" onClick={() => moderateUser("unkick")}>Unkick</button>
+                  {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("ban")}>Ban</button> : null}
+                  {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateUser("unban")}>Unban</button> : null}
                 </div>
               ) : null}
 
@@ -682,9 +886,59 @@ export default function App() {
                 {typingUsers.length ? <span className="typing-indicator">• {typingUsers.join(", ")} typing...</span> : null}
               </div>
 
-              {role === "host" && (moderationInfo.muted?.length || moderationInfo.banned?.length) ? (
+              <section className="members-sidebar" aria-label="Members">
+                <div className="members-sidebar-head">
+                  <strong>Members</strong>
+                  <span>{memberDirectory.length}</span>
+                </div>
+                <div className="members-sidebar-list">
+                  {memberDirectory.map((member) => {
+                    const normalizedMember = String(member).toLowerCase();
+                    const isSelf = normalizedMember === String(user).toLowerCase();
+                    const currentMemberRole = memberRole(member);
+                    const isMuted = (moderationInfo.muted || []).includes(normalizedMember);
+                    const isBanned = (moderationInfo.banned || []).includes(normalizedMember);
+                    const isKicked = (moderationInfo.kicked || []).includes(normalizedMember);
+                    const canModerateTarget = !isSelf && roleCanModerate(role) && (role === "host" || currentMemberRole === "member");
+
+                    return (
+                      <article className="member-item" key={member}>
+                        <div className="member-item-row">
+                          <span className="member-name">{member}</span>
+                          <span className={`role-badge ${currentMemberRole}`}>{currentMemberRole}</span>
+                        </div>
+                        <div className="member-flags">
+                          {isMuted ? <span className="member-flag">Muted {formatRemaining(moderationInfo.mutedUntil?.[normalizedMember])}</span> : null}
+                          {isKicked ? <span className="member-flag">Kicked</span> : null}
+                          {isBanned ? <span className="member-flag">Banned {formatRemaining(moderationInfo.bannedUntil?.[normalizedMember])}</span> : null}
+                        </div>
+                        {canModerateTarget ? (
+                          <div className="member-inline-actions">
+                            <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("mute", member)}>Mute</button>
+                            <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute", member)}>Unmute</button>
+                            <button type="button" className="ghost-btn" onClick={() => moderateUser("kick", member)}>Kick</button>
+                            <button type="button" className="ghost-btn" onClick={() => moderateUser("unkick", member)}>Unkick</button>
+                            {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("ban", member)}>Ban</button> : null}
+                            {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateUser("unban", member)}>Unban</button> : null}
+                          </div>
+                        ) : null}
+                        {!isSelf && roleCanManageRoles(role) ? (
+                          <div className="member-role-actions">
+                            <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", member, { targetRole: "moderator" })}>Make Moderator</button>
+                            <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", member, { targetRole: "cohost" })}>Make Co-host</button>
+                            <button type="button" className="ghost-btn" onClick={() => moderateUser("clearrole", member)}>Set Member</button>
+                          </div>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {(roleCanModerate(role)) && (moderationInfo.muted?.length || moderationInfo.kicked?.length || moderationInfo.banned?.length) ? (
                 <div className="moderation-lists">
                   <span>Muted: {moderationInfo.muted?.join(", ") || "none"}</span>
+                  <span>Kicked: {moderationInfo.kicked?.join(", ") || "none"}</span>
                   <span>Banned: {moderationInfo.banned?.join(", ") || "none"}</span>
                 </div>
               ) : null}
@@ -696,20 +950,28 @@ export default function App() {
                   const bubbleClass = `bubble ${isMine ? "mine" : "other"} ${isMentioned ? "mention" : ""} ${message.type === "dm" ? "dm" : ""}`.trim();
                   const canEdit = isMine && !message.deleted;
                   const canDelete = (isMine || role === "host") && !message.deleted;
+                  const senderRole = memberRole(message.user);
 
                   return (
                     <article
                       className={bubbleClass}
                       key={message.id}
+                      onContextMenu={(event) => openContextMenu(event, message)}
                       style={{ animationDelay: `${Math.min(index * 24, 280)}ms` }}
                     >
                       <div className="meta">
                         <strong className="user">{message.user}</strong>
                         {message.type === "dm" ? <span className="dm-pill">DM {message.to ? `to ${message.to}` : ""}</span> : null}
-                        <span className={`role-badge ${String(message.role || "member")}`}>{String(message.role || "member")}</span>
+                        <span className={`role-badge ${senderRole}`}>{senderRole}</span>
                         <span className="time">{formatTime(message.ts)}</span>
                         {message.editedAt ? <span className="edited-pill">edited</span> : null}
                       </div>
+                      {message.replyTo ? (
+                        <div className="reply-preview">
+                          <strong>{message.replyTo.user || "Unknown"}</strong>
+                          <span>{message.replyTo.text || ""}</span>
+                        </div>
+                      ) : null}
                       <p className="text">{message.text}</p>
                       {(canEdit || canDelete) ? (
                         <div className="message-actions">
@@ -723,6 +985,12 @@ export default function App() {
               </div>
 
               <form className="composer" onSubmit={onSubmit}>
+                {replyTo ? (
+                  <div className="replying-strip">
+                    <span>Replying to {replyTo.user}: {replyTo.text}</span>
+                    <button type="button" onClick={() => setReplyTo(null)}>Cancel</button>
+                  </div>
+                ) : null}
                 <input
                   type="text"
                   maxLength={500}
@@ -772,6 +1040,84 @@ export default function App() {
           </>
         )}
       </main>
+
+      {isReady && roleCanModerate(role) && showMemberControls ? (
+        <div className="member-controls-backdrop" onClick={() => setShowMemberControls(false)}>
+          <section className="member-controls-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="member-controls-header">
+              <h2>Member Controls</h2>
+              <button type="button" className="ghost-btn" onClick={() => setShowMemberControls(false)}>Close</button>
+            </div>
+            <div className="member-controls-grid">
+              {memberDirectory
+                .filter((participant) => participant.toLowerCase() !== String(user).toLowerCase())
+                .map((participant) => (
+                  <article className="member-row" key={participant}>
+                    <strong>{participant}</strong>
+                    <div className="member-row-actions">
+                      <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("mute", participant)}>Mute</button>
+                      <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute", participant)}>Unmute</button>
+                      <button type="button" className="ghost-btn" onClick={() => moderateUser("kick", participant)}>Kick</button>
+                      <button type="button" className="ghost-btn" onClick={() => moderateUser("unkick", participant)}>Unkick</button>
+                      {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("ban", participant)}>Ban</button> : null}
+                      {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateUser("unban", participant)}>Unban</button> : null}
+                    </div>
+                    {roleCanManageRoles(role) ? (
+                      <div className="member-row-actions">
+                        <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", participant, { targetRole: "moderator" })}>Make Moderator</button>
+                        <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", participant, { targetRole: "cohost" })}>Make Co-host</button>
+                        <button type="button" className="ghost-btn" onClick={() => moderateUser("clearrole", participant)}>Set Member</button>
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isReady && contextMenu.visible && contextMenu.message ? (
+        <menu
+          className="message-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            type="button"
+            onClick={() => selectReplyTarget(contextMenu.message)}
+          >
+            Reply
+          </button>
+          {String(contextMenu.message.user || "").toLowerCase() === String(user || "").toLowerCase() && !contextMenu.message.deleted ? (
+            <button type="button" onClick={() => {
+              performMessageAction("edit", contextMenu.message);
+              closeContextMenu();
+            }}>
+              Edit Message
+            </button>
+          ) : null}
+          {(String(contextMenu.message.user || "").toLowerCase() === String(user || "").toLowerCase() || role === "host") && !contextMenu.message.deleted ? (
+            <button type="button" onClick={() => {
+              performMessageAction("delete", contextMenu.message);
+              closeContextMenu();
+            }}>
+              Delete Message
+            </button>
+          ) : null}
+          {roleCanModerate(role) && String(contextMenu.message.user || "").toLowerCase() !== String(user || "").toLowerCase() ? (
+            <>
+              <button type="button" onClick={() => moderateWithOptionalDuration("mute", contextMenu.message.user)}>Mute User</button>
+              <button type="button" onClick={() => moderateUser("unmute", contextMenu.message.user)}>Unmute User</button>
+              <button type="button" onClick={() => moderateUser("kick", contextMenu.message.user)}>Kick User</button>
+              <button type="button" onClick={() => moderateUser("unkick", contextMenu.message.user)}>Unkick User</button>
+              {roleCanBan(role) ? <button type="button" onClick={() => moderateWithOptionalDuration("ban", contextMenu.message.user)}>Ban User</button> : null}
+              {roleCanBan(role) ? <button type="button" onClick={() => moderateUser("unban", contextMenu.message.user)}>Unban User</button> : null}
+              {roleCanManageRoles(role) ? <button type="button" onClick={() => moderateUser("setrole", contextMenu.message.user, { targetRole: "moderator" })}>Make Moderator</button> : null}
+              {roleCanManageRoles(role) ? <button type="button" onClick={() => moderateUser("setrole", contextMenu.message.user, { targetRole: "cohost" })}>Make Co-host</button> : null}
+              {roleCanManageRoles(role) ? <button type="button" onClick={() => moderateUser("clearrole", contextMenu.message.user)}>Set Member</button> : null}
+            </>
+          ) : null}
+        </menu>
+      ) : null}
     </>
   );
 }

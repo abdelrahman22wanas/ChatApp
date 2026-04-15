@@ -111,9 +111,13 @@ function normalizeUser(value) {
   return String(value || "").trim().toLowerCase().slice(0, 32);
 }
 
-function normalizeRole(value) {
-  if (String(value || "").trim().toLowerCase() === "host") {
-    return "host";
+function normalizeMemberRole(value) {
+  const role = String(value || "").trim().toLowerCase();
+  if (role === "cohost") {
+    return "cohost";
+  }
+  if (role === "moderator") {
+    return "moderator";
   }
   return "member";
 }
@@ -121,8 +125,11 @@ function normalizeRole(value) {
 function emptyRoomState() {
   return {
     host: "",
+    roles: {},
     muted: [],
+    mutedUntil: {},
     banned: [],
+    bannedUntil: {},
     kicked: [],
     presence: {},
     typing: {},
@@ -134,11 +141,44 @@ function normalizeRoomState(state) {
   const next = state || emptyRoomState();
   const presence = next.presence && typeof next.presence === "object" ? next.presence : {};
   const typing = next.typing && typeof next.typing === "object" ? next.typing : {};
+  const roles = next.roles && typeof next.roles === "object" ? next.roles : {};
+  const mutedUntil = next.mutedUntil && typeof next.mutedUntil === "object" ? next.mutedUntil : {};
+  const bannedUntil = next.bannedUntil && typeof next.bannedUntil === "object" ? next.bannedUntil : {};
+
+  const normalizedRoles = {};
+  for (const [user, role] of Object.entries(roles)) {
+    const normalizedUser = normalizeUser(user);
+    const normalizedRole = normalizeMemberRole(role);
+    if (normalizedUser && normalizedRole !== "member") {
+      normalizedRoles[normalizedUser] = normalizedRole;
+    }
+  }
+
+  const normalizedMutedUntil = {};
+  for (const [user, untilTs] of Object.entries(mutedUntil)) {
+    const normalizedUser = normalizeUser(user);
+    const numeric = Number(untilTs || 0);
+    if (normalizedUser && Number.isFinite(numeric) && numeric > 0) {
+      normalizedMutedUntil[normalizedUser] = numeric;
+    }
+  }
+
+  const normalizedBannedUntil = {};
+  for (const [user, untilTs] of Object.entries(bannedUntil)) {
+    const normalizedUser = normalizeUser(user);
+    const numeric = Number(untilTs || 0);
+    if (normalizedUser && Number.isFinite(numeric) && numeric > 0) {
+      normalizedBannedUntil[normalizedUser] = numeric;
+    }
+  }
 
   return {
     host: normalizeUser(next.host),
+    roles: normalizedRoles,
     muted: Array.isArray(next.muted) ? [...new Set(next.muted.map(normalizeUser).filter(Boolean))] : [],
+    mutedUntil: normalizedMutedUntil,
     banned: Array.isArray(next.banned) ? [...new Set(next.banned.map(normalizeUser).filter(Boolean))] : [],
+    bannedUntil: normalizedBannedUntil,
     kicked: Array.isArray(next.kicked) ? [...new Set(next.kicked.map(normalizeUser).filter(Boolean))] : [],
     presence,
     typing,
@@ -165,7 +205,62 @@ function cleanupTemporalState(state) {
 
   next.presence = cleanedPresence;
   next.typing = cleanedTyping;
+
+  const activeMuted = [];
+  for (const user of next.muted) {
+    const until = Number(next.mutedUntil[user] || 0);
+    if (!until || until > now) {
+      activeMuted.push(user);
+      if (until) {
+        next.mutedUntil[user] = until;
+      } else {
+        delete next.mutedUntil[user];
+      }
+    } else {
+      delete next.mutedUntil[user];
+    }
+  }
+  next.muted = activeMuted;
+
+  const activeBanned = [];
+  for (const user of next.banned) {
+    const until = Number(next.bannedUntil[user] || 0);
+    if (!until || until > now) {
+      activeBanned.push(user);
+      if (until) {
+        next.bannedUntil[user] = until;
+      } else {
+        delete next.bannedUntil[user];
+      }
+    } else {
+      delete next.bannedUntil[user];
+      next.kicked = next.kicked.filter((entry) => entry !== user);
+    }
+  }
+  next.banned = activeBanned;
+
   return next;
+}
+
+function roleForUser(state, user) {
+  const normalizedUser = normalizeUser(user);
+  if (!normalizedUser) {
+    return "member";
+  }
+  if (normalizeUser(state.host) === normalizedUser) {
+    return "host";
+  }
+  return normalizeMemberRole(state.roles[normalizedUser]);
+}
+
+function canModerate(action, actorRole) {
+  if (actorRole === "host") {
+    return true;
+  }
+  if (actorRole === "cohost" || actorRole === "moderator") {
+    return action === "mute" || action === "unmute" || action === "kick" || action === "unkick";
+  }
+  return false;
 }
 
 async function readRoomStatesFromKv() {
@@ -236,13 +331,9 @@ async function listMessages(room, user) {
   const normalizedRoom = normalizeRoom(room);
   const roomStateBundle = await readRoomState(normalizedRoom);
   await writeRoomState(normalizedRoom, roomStateBundle.all, roomStateBundle.current);
+  const myRole = roleForUser(roomStateBundle.current, user);
 
   const access = hasAccess(roomStateBundle.current, user);
-
-  if (access.kicked) {
-    roomStateBundle.current.kicked = roomStateBundle.current.kicked.filter((entry) => entry !== normalizeUser(user));
-    await writeRoomState(normalizedRoom, roomStateBundle.all, roomStateBundle.current);
-  }
 
   if (hasKvConfig()) {
     const allMessages = normalizeMessages(await readFromKv());
@@ -266,11 +357,16 @@ async function listMessages(room, user) {
     return {
       storage: "kv",
       roomHost: roomStateBundle.current.host,
+      myRole,
       onlineUsers,
       typingUsers,
       moderation: {
+        roles: roomStateBundle.current.roles,
         muted: roomStateBundle.current.muted,
+        mutedUntil: roomStateBundle.current.mutedUntil,
         banned: roomStateBundle.current.banned,
+        bannedUntil: roomStateBundle.current.bannedUntil,
+        kicked: roomStateBundle.current.kicked,
         log: roomStateBundle.current.moderationLog
       },
       access,
@@ -299,11 +395,16 @@ async function listMessages(room, user) {
   return {
     storage: "memory",
     roomHost: roomStateBundle.current.host,
+    myRole,
     onlineUsers,
     typingUsers,
     moderation: {
+      roles: roomStateBundle.current.roles,
       muted: roomStateBundle.current.muted,
+      mutedUntil: roomStateBundle.current.mutedUntil,
       banned: roomStateBundle.current.banned,
+      bannedUntil: roomStateBundle.current.bannedUntil,
+      kicked: roomStateBundle.current.kicked,
       log: roomStateBundle.current.moderationLog
     },
     access,
@@ -326,7 +427,8 @@ async function appendMessage(message) {
     return { denied: "muted" };
   }
 
-  if (!roomStateBundle.current.host && normalizeRole(message.role) === "host") {
+  // First sender becomes host if the room does not have one yet.
+  if (!roomStateBundle.current.host) {
     roomStateBundle.current.host = normalizedUser;
     await writeRoomState(message.room, roomStateBundle.all, roomStateBundle.current);
   }
@@ -338,6 +440,13 @@ async function appendMessage(message) {
     room: normalizeRoom(message.room),
     type: message.to ? "dm" : "room",
     role: roomStateBundle.current.host && normalizeUser(roomStateBundle.current.host) === normalizedUser ? "host" : "member",
+    replyTo: message.replyTo && typeof message.replyTo === "object"
+      ? {
+          id: String(message.replyTo.id || "").trim().slice(0, 64),
+          user: String(message.replyTo.user || "").trim().slice(0, 32),
+          text: String(message.replyTo.text || "").trim().slice(0, 160)
+        }
+      : null,
     text: message.text,
     editedAt: "",
     deleted: false,
@@ -360,9 +469,10 @@ async function appendMessage(message) {
 async function moderateRoom(payload) {
   const room = normalizeRoom(payload.room);
   const actor = normalizeUser(payload.actor);
-  const actorRole = normalizeRole(payload.actorRole);
   const target = normalizeUser(payload.target);
   const action = String(payload.action || "").trim().toLowerCase();
+  const requestedRole = normalizeMemberRole(payload.targetRole);
+  const durationMs = Math.max(0, Number(payload.durationMs || 0));
 
   if (!room || !actor || !target) {
     return { ok: false, error: "room, actor, and target are required." };
@@ -370,30 +480,64 @@ async function moderateRoom(payload) {
 
   const roomStateBundle = await readRoomState(room);
   const state = roomStateBundle.current;
+  const actorRole = roleForUser(state, actor);
+  const targetRole = roleForUser(state, target);
 
-  if (!state.host && actorRole === "host") {
-    state.host = actor;
-  }
-
-  if (state.host !== actor) {
-    return { ok: false, error: "Only the room host can moderate users.", code: 403 };
+  if (!canModerate(action, actorRole) && !(actorRole === "host" && (action === "setrole" || action === "clearrole"))) {
+    return { ok: false, error: "You do not have permission for this action.", code: 403 };
   }
 
   if (target === state.host) {
     return { ok: false, error: "Host cannot moderate themselves.", code: 400 };
   }
 
+  if (actorRole !== "host" && targetRole !== "member") {
+    return { ok: false, error: "You can only moderate members.", code: 403 };
+  }
+
   if (action === "mute") {
     state.muted = [...new Set([...state.muted, target])];
+    if (durationMs > 0) {
+      state.mutedUntil[target] = Date.now() + durationMs;
+    } else {
+      delete state.mutedUntil[target];
+    }
   } else if (action === "unmute") {
     state.muted = state.muted.filter((user) => user !== target);
+    delete state.mutedUntil[target];
   } else if (action === "ban") {
     state.banned = [...new Set([...state.banned, target])];
     state.kicked = [...new Set([...state.kicked, target])];
+    if (durationMs > 0) {
+      state.bannedUntil[target] = Date.now() + durationMs;
+    } else {
+      delete state.bannedUntil[target];
+    }
+    delete state.presence[target];
+    delete state.typing[target];
   } else if (action === "unban") {
     state.banned = state.banned.filter((user) => user !== target);
+    delete state.bannedUntil[target];
+  } else if (action === "unkick") {
+    state.kicked = state.kicked.filter((user) => user !== target);
   } else if (action === "kick") {
     state.kicked = [...new Set([...state.kicked, target])];
+    delete state.presence[target];
+    delete state.typing[target];
+  } else if (action === "setrole") {
+    if (actorRole !== "host") {
+      return { ok: false, error: "Only host can assign roles.", code: 403 };
+    }
+    if (requestedRole === "member") {
+      delete state.roles[target];
+    } else {
+      state.roles[target] = requestedRole;
+    }
+  } else if (action === "clearrole") {
+    if (actorRole !== "host") {
+      return { ok: false, error: "Only host can clear roles.", code: 403 };
+    }
+    delete state.roles[target];
   } else {
     return { ok: false, error: "Unsupported moderation action.", code: 400 };
   }
@@ -410,8 +554,11 @@ async function moderateRoom(payload) {
   return {
     ok: true,
     roomHost: state.host,
+    roles: state.roles,
     muted: state.muted,
+    mutedUntil: state.mutedUntil,
     banned: state.banned,
+    bannedUntil: state.bannedUntil,
     kicked: state.kicked
   };
 }
@@ -427,6 +574,18 @@ async function setPresence(payload) {
 
   const roomStateBundle = await readRoomState(room);
   const state = roomStateBundle.current;
+  const access = hasAccess(state, user);
+
+  if (access.banned || access.kicked) {
+    delete state.presence[user];
+    delete state.typing[user];
+    await writeRoomState(room, roomStateBundle.all, state);
+    return {
+      ok: false,
+      code: 403,
+      error: access.banned ? "banned" : "kicked"
+    };
+  }
 
   if (active) {
     state.presence[user] = Date.now();
@@ -450,6 +609,17 @@ async function setTyping(payload) {
 
   const roomStateBundle = await readRoomState(room);
   const state = roomStateBundle.current;
+  const access = hasAccess(state, user);
+
+  if (access.banned || access.kicked) {
+    delete state.typing[user];
+    await writeRoomState(room, roomStateBundle.all, state);
+    return {
+      ok: false,
+      code: 403,
+      error: access.banned ? "banned" : "kicked"
+    };
+  }
 
   if (active) {
     state.typing[user] = Date.now();
@@ -464,7 +634,6 @@ async function setTyping(payload) {
 async function applyMessageAction(payload) {
   const room = normalizeRoom(payload.room);
   const actor = normalizeUser(payload.actor);
-  const actorRole = normalizeRole(payload.actorRole);
   const action = String(payload.action || "").trim().toLowerCase();
   const messageId = String(payload.messageId || "").trim();
   const text = String(payload.text || "").trim().slice(0, 500);
@@ -474,11 +643,6 @@ async function applyMessageAction(payload) {
   }
 
   const roomStateBundle = await readRoomState(room);
-  if (!roomStateBundle.current.host && actorRole === "host") {
-    roomStateBundle.current.host = actor;
-    await writeRoomState(room, roomStateBundle.all, roomStateBundle.current);
-  }
-
   const host = roomStateBundle.current.host;
   const allMessages = hasKvConfig() ? normalizeMessages(await readFromKv()) : normalizeMessages(readFromMemory());
   const index = allMessages.findIndex((message) => message.id === messageId && normalizeRoom(message.room) === room);

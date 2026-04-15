@@ -1,4 +1,5 @@
 const { moderateRoom } = require("./_store");
+const { requireAuth } = require("./_auth");
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -17,13 +18,23 @@ module.exports = async (req, res) => {
   }
 
   try {
+    const auth = await requireAuth(req);
+    if (!auth.ok) {
+      return json(res, auth.status || 401, { error: auth.error || "Unauthorized" });
+    }
+
     const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
+    const actor = auth.authEnabled
+      ? safeText(req.headers["x-auth-display-name"], 32) || `user-${String(auth.userId).slice(-6)}`
+      : safeText(payload.actor, 32);
+
     const result = await moderateRoom({
       room: safeText(payload.room, 24),
-      actor: safeText(payload.actor, 32),
-      actorRole: safeText(payload.actorRole, 16),
+      actor,
       target: safeText(payload.target, 32),
-      action: safeText(payload.action, 16)
+      action: safeText(payload.action, 16),
+      targetRole: safeText(payload.targetRole, 16),
+      durationMs: Number(payload.durationMs || 0)
     });
 
     if (!result.ok) {
