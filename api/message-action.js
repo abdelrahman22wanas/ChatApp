@@ -33,7 +33,8 @@ module.exports = async (req, res) => {
       actor,
       action: safeText(payload.action, 16),
       messageId: safeText(payload.messageId, 64),
-      text: safeText(payload.text, 500)
+      text: safeText(payload.text, 500),
+      reaction: safeText(payload.reaction, 8)
     });
 
     if (!result.ok) {

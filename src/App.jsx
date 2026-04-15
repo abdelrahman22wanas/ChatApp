@@ -7,6 +7,7 @@ const MODE_KEY = "chatapp.web.mode";
 const ROLE_KEY = "chatapp.web.role";
 const SOUND_MODE_KEY = "chatapp.web.soundMode";
 const LEFT_PANEL_WIDTH_KEY = "chatapp.web.leftPanelWidth";
+const REACTION_OPTIONS = ["👍", "❤️", "😂", "🎉", "🔥", "👏"];
 
 function roomCacheKey(room) {
   return `chatapp.web.room.messages.${room}`;
@@ -62,6 +63,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   });
   const [replyTo, setReplyTo] = useState(null);
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, message: null });
+  const [searchQuery, setSearchQuery] = useState("");
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
     const value = Number(localStorage.getItem(LEFT_PANEL_WIDTH_KEY) || 300);
     return Number.isFinite(value) ? value : 300;
@@ -96,6 +98,27 @@ export default function App({ authRequired = false, authUser = null, getToken = 
 
     return [...users.values()].sort((a, b) => a.localeCompare(b));
   }, [messages, moderationInfo, onlineUsers]);
+
+  const filteredMessages = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) {
+      return messages;
+    }
+
+    return messages.filter((message) => {
+      const haystacks = [
+        message.user,
+        message.text,
+        message.to,
+        message.type,
+        message.ts,
+        message.role,
+        message.replyTo?.user,
+        message.replyTo?.text
+      ];
+      return haystacks.some((value) => String(value || "").toLowerCase().includes(query));
+    });
+  }, [messages, searchQuery]);
 
   function memberRole(memberName) {
     const normalized = String(memberName || "").toLowerCase();
@@ -727,8 +750,17 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     }
   }
 
-  async function performMessageAction(action, message) {
+  async function performMessageAction(action, message, extra = {}) {
     try {
+      let textValue = "";
+      if (action === "edit") {
+        const editedText = window.prompt("Edit message", message.text || "");
+        if (editedText === null) {
+          return;
+        }
+        textValue = editedText;
+      }
+
       const headers = await authHeaders();
       const response = await fetch("/api/message-action", {
         method: "POST",
@@ -738,7 +770,8 @@ export default function App({ authRequired = false, authUser = null, getToken = 
           actor: user,
           action,
           messageId: message.id,
-          text: action === "edit" ? window.prompt("Edit message", message.text || "") || "" : ""
+          text: textValue,
+          ...extra
         })
       });
 
@@ -905,6 +938,23 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                       <strong>Members</strong>
                       <span>{memberDirectory.length}</span>
                     </div>
+
+                    <div className="history-search">
+                      <label className="entry-label" htmlFor="historySearch">Search history</label>
+                      <input
+                        id="historySearch"
+                        className="entry-input"
+                        type="search"
+                        placeholder="Search user, text, date"
+                        value={searchQuery}
+                        onChange={(event) => setSearchQuery(event.target.value)}
+                      />
+                      <div className="history-search-meta">
+                        <span>{filteredMessages.length} result{filteredMessages.length === 1 ? "" : "s"}</span>
+                        <button type="button" className="ghost-btn" onClick={() => setSearchQuery("")} disabled={!searchQuery}>Clear</button>
+                      </div>
+                    </div>
+
                     <div className="members-sidebar-list">
                       {memberDirectory.map((member) => {
                         const normalizedMember = String(member).toLowerCase();
@@ -1015,13 +1065,17 @@ export default function App({ authRequired = false, authUser = null, getToken = 
 
                 <section className="chat-main">
                   <div ref={messagesRef} className="messages" aria-live="polite" aria-label="Chat messages">
-                    {messages.map((message, index) => {
+                    {filteredMessages.length ? filteredMessages.map((message, index) => {
                       const isMine = String(message.user || "").toLowerCase() === String(user || "").toLowerCase();
                       const isMentioned = isMentionedMessage(message.text, user) && !isMine;
                       const bubbleClass = `bubble ${isMine ? "mine" : "other"} ${isMentioned ? "mention" : ""} ${message.type === "dm" ? "dm" : ""}`.trim();
                       const canEdit = isMine && !message.deleted;
                       const canDelete = (isMine || role === "host") && !message.deleted;
                       const senderRole = memberRole(message.user);
+                      const reactionEntries = Object.entries(message.reactions || {})
+                        .map(([emoji, users]) => [emoji, Array.isArray(users) ? users : []])
+                        .filter(([, users]) => users.length)
+                        .sort((left, right) => REACTION_OPTIONS.indexOf(left[0]) - REACTION_OPTIONS.indexOf(right[0]));
 
                       return (
                         <article
@@ -1044,6 +1098,39 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                             </div>
                           ) : null}
                           <p className="text">{message.text}</p>
+                          <div className="reaction-row" aria-label="Message reactions">
+                            {reactionEntries.map(([emoji, users]) => {
+                              const reacted = users.some((reactionUser) => String(reactionUser || "").toLowerCase() === String(user || "").toLowerCase());
+                              return (
+                                <button
+                                  type="button"
+                                  key={emoji}
+                                  className={`reaction-chip ${reacted ? "active" : ""}`.trim()}
+                                  onClick={() => performMessageAction("react", message, { reaction: emoji })}
+                                  title={`React with ${emoji}`}
+                                >
+                                  <span>{emoji}</span>
+                                  <span>{users.length}</span>
+                                </button>
+                              );
+                            })}
+                            <div className="reaction-palette" aria-label="Quick reactions">
+                              {REACTION_OPTIONS.map((emoji) => {
+                                const reacted = Array.isArray(message.reactions?.[emoji]) && message.reactions[emoji].some((reactionUser) => String(reactionUser || "").toLowerCase() === String(user || "").toLowerCase());
+                                return (
+                                  <button
+                                    type="button"
+                                    key={emoji}
+                                    className={`reaction-pick ${reacted ? "active" : ""}`.trim()}
+                                    onClick={() => performMessageAction("react", message, { reaction: emoji })}
+                                    title={`Toggle ${emoji}`}
+                                  >
+                                    {emoji}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
                           {(canEdit || canDelete) ? (
                             <div className="message-actions">
                               {canEdit ? <button type="button" onClick={() => performMessageAction("edit", message)}>Edit</button> : null}
@@ -1052,7 +1139,12 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                           ) : null}
                         </article>
                       );
-                    })}
+                    }) : (
+                      <div className="search-empty-state">
+                        <strong>No messages match your search.</strong>
+                        <span>Try a user name, a word from the message, or part of the date/time.</span>
+                      </div>
+                    )}
                   </div>
 
                   <form className="composer" onSubmit={onSubmit}>

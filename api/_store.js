@@ -99,6 +99,53 @@ function normalizeMessages(messages) {
   return messages.slice(-MEMORY_LIMIT);
 }
 
+function normalizeReactions(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const reactions = {};
+  for (const [emoji, users] of Object.entries(value)) {
+    const normalizedEmoji = String(emoji || "").trim().slice(0, 8);
+    if (!normalizedEmoji) {
+      continue;
+    }
+    const normalizedUsers = Array.isArray(users)
+      ? [...new Set(users.map(normalizeUser).filter(Boolean))]
+      : [];
+    if (normalizedUsers.length) {
+      reactions[normalizedEmoji] = normalizedUsers;
+    }
+  }
+
+  return reactions;
+}
+
+function toggleReaction(reactions, emoji, actor) {
+  const normalizedEmoji = String(emoji || "").trim().slice(0, 8);
+  const normalizedActor = normalizeUser(actor);
+  if (!normalizedEmoji || !normalizedActor) {
+    return reactions;
+  }
+
+  const next = normalizeReactions(reactions);
+  const current = next[normalizedEmoji] || [];
+  const hasReaction = current.includes(normalizedActor);
+
+  if (hasReaction) {
+    const remaining = current.filter((user) => user !== normalizedActor);
+    if (remaining.length) {
+      next[normalizedEmoji] = remaining;
+    } else {
+      delete next[normalizedEmoji];
+    }
+  } else {
+    next[normalizedEmoji] = [...current, normalizedActor];
+  }
+
+  return next;
+}
+
 function normalizeRoom(value) {
   return String(value || "")
     .trim()
@@ -448,6 +495,7 @@ async function appendMessage(message) {
         }
       : null,
     text: message.text,
+    reactions: {},
     editedAt: "",
     deleted: false,
     ts: message.ts
@@ -637,6 +685,7 @@ async function applyMessageAction(payload) {
   const action = String(payload.action || "").trim().toLowerCase();
   const messageId = String(payload.messageId || "").trim();
   const text = String(payload.text || "").trim().slice(0, 500);
+  const reaction = String(payload.reaction || "").trim().slice(0, 8);
 
   if (!room || !actor || !messageId) {
     return { ok: false, error: "room, actor and messageId are required.", code: 400 };
@@ -664,6 +713,11 @@ async function applyMessageAction(payload) {
     }
     message.text = text;
     message.editedAt = new Date().toISOString();
+  } else if (action === "react") {
+    if (!reaction) {
+      return { ok: false, error: "Reaction is required.", code: 400 };
+    }
+    message.reactions = toggleReaction(message.reactions, reaction, actor);
   } else if (action === "delete") {
     if (!isOwner && !isHost) {
       return { ok: false, error: "Only owner or host can delete.", code: 403 };
