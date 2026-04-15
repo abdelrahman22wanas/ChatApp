@@ -5,6 +5,10 @@ const USER_KEY = "chatapp.web.user";
 const ROOM_KEY = "chatapp.web.room";
 const MODE_KEY = "chatapp.web.mode";
 
+function roomCacheKey(room) {
+  return `chatapp.web.room.messages.${room}`;
+}
+
 function formatTime(value) {
   return new Date(value).toLocaleTimeString([], {
     hour: "2-digit",
@@ -95,7 +99,11 @@ export default function App() {
     }
 
     const payload = await response.json();
-    setMessages(payload.messages || []);
+    const nextMessages = payload.messages || [];
+    setMessages(nextMessages);
+    if (room) {
+      localStorage.setItem(roomCacheKey(room), JSON.stringify(nextMessages));
+    }
     setStorage(payload.storage || "memory");
 
     if (payload.storage === "memory") {
@@ -123,6 +131,18 @@ export default function App() {
   useEffect(() => {
     if (!isReady || !room || !user) {
       return;
+    }
+
+    const cached = localStorage.getItem(roomCacheKey(room));
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          setMessages(parsed);
+        }
+      } catch (error) {
+        // Ignore malformed cache and continue with server fetch.
+      }
     }
 
     let active = true;
