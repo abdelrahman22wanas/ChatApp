@@ -636,18 +636,34 @@ input[type="search"]:focus {
 }
 
 .attachment-preview-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
   grid-column: 1 / -1;
 }
 
 .attachment-preview-item {
+  display: grid;
+  gap: 6px;
+  align-content: start;
   font-size: 0.76rem;
   border: 1px solid rgba(96, 126, 156, 0.14);
-  border-radius: 999px;
-  padding: 4px 8px;
+  border-radius: 10px;
+  padding: 6px;
   background: var(--surface);
+  min-height: 54px;
+}
+
+.attachment-preview-item span {
+  overflow-wrap: anywhere;
+}
+
+.attachment-preview-thumb {
+  width: 100%;
+  max-height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(96, 126, 156, 0.16);
 }
 
 .attachment-list {

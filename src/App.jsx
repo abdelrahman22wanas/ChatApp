@@ -248,6 +248,40 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     }
   }
 
+  async function addFilesAsAttachments(files, mode = "replace") {
+    const maxFiles = 5;
+    const maxFileSize = 4 * 1024 * 1024;
+    const existing = mode === "append" ? pendingAttachments : [];
+
+    if (!files.length) {
+      if (mode !== "append") {
+        setPendingAttachments([]);
+      }
+      return;
+    }
+
+    const availableSlots = Math.max(0, maxFiles - existing.length);
+    const selectedFiles = files.slice(0, availableSlots).filter((file) => file.size <= maxFileSize);
+
+    if (selectedFiles.length !== files.length || files.length > availableSlots) {
+      applyStatus("Attachments are limited to 5 files and 4 MB each.", "warn");
+    }
+
+    if (!selectedFiles.length) {
+      return;
+    }
+
+    try {
+      const encoded = await Promise.all(selectedFiles.map(fileToAttachment));
+      setPendingAttachments([...existing, ...encoded]);
+    } catch (error) {
+      applyStatus(error.message, "error");
+      if (mode !== "append") {
+        clearPendingAttachments();
+      }
+    }
+  }
+
   function fileToAttachment(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -267,25 +301,31 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   async function handleAttachmentChange(event) {
     const files = Array.from(event.target.files || []);
     if (!files.length) {
-      setPendingAttachments([]);
+      clearPendingAttachments();
       return;
     }
 
-    const maxFiles = 5;
-    const maxFileSize = 4 * 1024 * 1024;
-    const selectedFiles = files.slice(0, maxFiles).filter((file) => file.size <= maxFileSize);
+    await addFilesAsAttachments(files, "replace");
+  }
 
-    if (selectedFiles.length !== files.length) {
-      applyStatus("Attachments are limited to 5 files and 4 MB each.", "warn");
+  async function handleComposerPaste(event) {
+    const items = Array.from(event.clipboardData?.items || []);
+    if (!items.length) {
+      return;
     }
 
-    try {
-      const encoded = await Promise.all(selectedFiles.map(fileToAttachment));
-      setPendingAttachments(encoded);
-    } catch (error) {
-      applyStatus(error.message, "error");
-      clearPendingAttachments();
+    const imageFiles = items
+      .filter((item) => item.kind === "file" && String(item.type || "").startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+
+    if (!imageFiles.length) {
+      return;
     }
+
+    event.preventDefault();
+    await addFilesAsAttachments(imageFiles, "append");
+    applyStatus(`${imageFiles.length} image${imageFiles.length === 1 ? "" : "s"} pasted as attachment.`);
   }
 
   function playNotificationSound() {
@@ -1260,6 +1300,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                       placeholder={status.includes("muted") ? "You are muted" : "Write a message..."}
                       autoComplete="off"
                       value={text}
+                      onPaste={handleComposerPaste}
                       onChange={(event) => {
                         setText(event.target.value);
                         postTyping(true);
@@ -1273,6 +1314,18 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                       disabled={status.includes("muted")}
                       required={!pendingAttachments.length}
                     />
+                    {pendingAttachments.length ? (
+                      <div className="attachment-preview-list">
+                        {pendingAttachments.map((attachment) => (
+                          <div className="attachment-preview-item" key={`${attachment.name}-${attachment.size}-${attachment.dataUrl.slice(0, 24)}`}>
+                            {attachmentKind(attachment) === "image" ? (
+                              <img src={attachment.dataUrl} alt={attachment.name} className="attachment-preview-thumb" />
+                            ) : null}
+                            <span>{attachment.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                     <button type="submit" disabled={status.includes("muted")}>Send</button>
                   </form>
 
