@@ -857,185 +857,195 @@ export default function App({ authRequired = false, authUser = null, getToken = 
             </header>
 
             <section className="chat-panel">
-              {roleCanModerate(role) ? (
-                <div className="moderation-bar">
-                  <select
-                    className="moderation-select"
-                    value={selectedTarget}
-                    onChange={(event) => setSelectedTarget(event.target.value)}
-                  >
-                    <option value="">Select user...</option>
-                    {participantList
-                      .filter((participant) => participant.toLowerCase() !== String(user).toLowerCase())
-                      .map((participant) => (
-                        <option key={participant} value={participant}>{participant}</option>
-                      ))}
-                  </select>
-                  <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("mute")}>Mute</button>
-                  <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute")}>Unmute</button>
-                  <button type="button" className="ghost-btn" onClick={() => moderateUser("kick")}>Kick</button>
-                  <button type="button" className="ghost-btn" onClick={() => moderateUser("unkick")}>Unkick</button>
-                  {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("ban")}>Ban</button> : null}
-                  {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateUser("unban")}>Unban</button> : null}
-                </div>
-              ) : null}
-
               <div className="presence-strip">
                 <span className="presence-label">Online:</span>
                 <span className="presence-users">{onlineUsers.length ? onlineUsers.join(", ") : "No active users"}</span>
                 {typingUsers.length ? <span className="typing-indicator">• {typingUsers.join(", ")} typing...</span> : null}
               </div>
+              <div className="chat-layout">
+                <aside className="chat-side chat-side-left">
+                  <section className="members-sidebar" aria-label="Members">
+                    <div className="members-sidebar-head">
+                      <strong>Members</strong>
+                      <span>{memberDirectory.length}</span>
+                    </div>
+                    <div className="members-sidebar-list">
+                      {memberDirectory.map((member) => {
+                        const normalizedMember = String(member).toLowerCase();
+                        const isSelf = normalizedMember === String(user).toLowerCase();
+                        const currentMemberRole = memberRole(member);
+                        const isMuted = (moderationInfo.muted || []).includes(normalizedMember);
+                        const isBanned = (moderationInfo.banned || []).includes(normalizedMember);
+                        const isKicked = (moderationInfo.kicked || []).includes(normalizedMember);
+                        const canModerateTarget = !isSelf && roleCanModerate(role) && (role === "host" || currentMemberRole === "member");
 
-              <section className="members-sidebar" aria-label="Members">
-                <div className="members-sidebar-head">
-                  <strong>Members</strong>
-                  <span>{memberDirectory.length}</span>
-                </div>
-                <div className="members-sidebar-list">
-                  {memberDirectory.map((member) => {
-                    const normalizedMember = String(member).toLowerCase();
-                    const isSelf = normalizedMember === String(user).toLowerCase();
-                    const currentMemberRole = memberRole(member);
-                    const isMuted = (moderationInfo.muted || []).includes(normalizedMember);
-                    const isBanned = (moderationInfo.banned || []).includes(normalizedMember);
-                    const isKicked = (moderationInfo.kicked || []).includes(normalizedMember);
-                    const canModerateTarget = !isSelf && roleCanModerate(role) && (role === "host" || currentMemberRole === "member");
+                        return (
+                          <article className="member-item" key={member}>
+                            <div className="member-item-row">
+                              <span className="member-name">{member}</span>
+                              <span className={`role-badge ${currentMemberRole}`}>{currentMemberRole}</span>
+                            </div>
+                            <div className="member-flags">
+                              {isMuted ? <span className="member-flag">Muted {formatRemaining(moderationInfo.mutedUntil?.[normalizedMember])}</span> : null}
+                              {isKicked ? <span className="member-flag">Kicked</span> : null}
+                              {isBanned ? <span className="member-flag">Banned {formatRemaining(moderationInfo.bannedUntil?.[normalizedMember])}</span> : null}
+                            </div>
+                            {canModerateTarget ? (
+                              <div className="member-inline-actions">
+                                <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("mute", member)}>Mute</button>
+                                <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute", member)}>Unmute</button>
+                                <button type="button" className="ghost-btn" onClick={() => moderateUser("kick", member)}>Kick</button>
+                                <button type="button" className="ghost-btn" onClick={() => moderateUser("unkick", member)}>Unkick</button>
+                                {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("ban", member)}>Ban</button> : null}
+                                {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateUser("unban", member)}>Unban</button> : null}
+                              </div>
+                            ) : null}
+                            {!isSelf && roleCanManageRoles(role) ? (
+                              <div className="member-role-actions">
+                                <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", member, { targetRole: "moderator" })}>Make Moderator</button>
+                                <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", member, { targetRole: "cohost" })}>Make Co-host</button>
+                                <button type="button" className="ghost-btn" onClick={() => moderateUser("clearrole", member)}>Set Member</button>
+                              </div>
+                            ) : null}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </aside>
 
-                    return (
-                      <article className="member-item" key={member}>
-                        <div className="member-item-row">
-                          <span className="member-name">{member}</span>
-                          <span className={`role-badge ${currentMemberRole}`}>{currentMemberRole}</span>
-                        </div>
-                        <div className="member-flags">
-                          {isMuted ? <span className="member-flag">Muted {formatRemaining(moderationInfo.mutedUntil?.[normalizedMember])}</span> : null}
-                          {isKicked ? <span className="member-flag">Kicked</span> : null}
-                          {isBanned ? <span className="member-flag">Banned {formatRemaining(moderationInfo.bannedUntil?.[normalizedMember])}</span> : null}
-                        </div>
-                        {canModerateTarget ? (
-                          <div className="member-inline-actions">
-                            <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("mute", member)}>Mute</button>
-                            <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute", member)}>Unmute</button>
-                            <button type="button" className="ghost-btn" onClick={() => moderateUser("kick", member)}>Kick</button>
-                            <button type="button" className="ghost-btn" onClick={() => moderateUser("unkick", member)}>Unkick</button>
-                            {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("ban", member)}>Ban</button> : null}
-                            {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateUser("unban", member)}>Unban</button> : null}
+                <section className="chat-main">
+                  <div ref={messagesRef} className="messages" aria-live="polite" aria-label="Chat messages">
+                    {messages.map((message, index) => {
+                      const isMine = String(message.user || "").toLowerCase() === String(user || "").toLowerCase();
+                      const isMentioned = isMentionedMessage(message.text, user) && !isMine;
+                      const bubbleClass = `bubble ${isMine ? "mine" : "other"} ${isMentioned ? "mention" : ""} ${message.type === "dm" ? "dm" : ""}`.trim();
+                      const canEdit = isMine && !message.deleted;
+                      const canDelete = (isMine || role === "host") && !message.deleted;
+                      const senderRole = memberRole(message.user);
+
+                      return (
+                        <article
+                          className={bubbleClass}
+                          key={message.id}
+                          onContextMenu={(event) => openContextMenu(event, message)}
+                          style={{ animationDelay: `${Math.min(index * 24, 280)}ms` }}
+                        >
+                          <div className="meta">
+                            <strong className="user">{message.user}</strong>
+                            {message.type === "dm" ? <span className="dm-pill">DM {message.to ? `to ${message.to}` : ""}</span> : null}
+                            <span className={`role-badge ${senderRole}`}>{senderRole}</span>
+                            <span className="time">{formatTime(message.ts)}</span>
+                            {message.editedAt ? <span className="edited-pill">edited</span> : null}
                           </div>
-                        ) : null}
-                        {!isSelf && roleCanManageRoles(role) ? (
-                          <div className="member-role-actions">
-                            <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", member, { targetRole: "moderator" })}>Make Moderator</button>
-                            <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", member, { targetRole: "cohost" })}>Make Co-host</button>
-                            <button type="button" className="ghost-btn" onClick={() => moderateUser("clearrole", member)}>Set Member</button>
-                          </div>
-                        ) : null}
-                      </article>
-                    );
-                  })}
-                </div>
-              </section>
-
-              {(roleCanModerate(role)) && (moderationInfo.muted?.length || moderationInfo.kicked?.length || moderationInfo.banned?.length) ? (
-                <div className="moderation-lists">
-                  <span>Muted: {moderationInfo.muted?.join(", ") || "none"}</span>
-                  <span>Kicked: {moderationInfo.kicked?.join(", ") || "none"}</span>
-                  <span>Banned: {moderationInfo.banned?.join(", ") || "none"}</span>
-                </div>
-              ) : null}
-
-              <div ref={messagesRef} className="messages" aria-live="polite" aria-label="Chat messages">
-                {messages.map((message, index) => {
-                  const isMine = String(message.user || "").toLowerCase() === String(user || "").toLowerCase();
-                  const isMentioned = isMentionedMessage(message.text, user) && !isMine;
-                  const bubbleClass = `bubble ${isMine ? "mine" : "other"} ${isMentioned ? "mention" : ""} ${message.type === "dm" ? "dm" : ""}`.trim();
-                  const canEdit = isMine && !message.deleted;
-                  const canDelete = (isMine || role === "host") && !message.deleted;
-                  const senderRole = memberRole(message.user);
-
-                  return (
-                    <article
-                      className={bubbleClass}
-                      key={message.id}
-                      onContextMenu={(event) => openContextMenu(event, message)}
-                      style={{ animationDelay: `${Math.min(index * 24, 280)}ms` }}
-                    >
-                      <div className="meta">
-                        <strong className="user">{message.user}</strong>
-                        {message.type === "dm" ? <span className="dm-pill">DM {message.to ? `to ${message.to}` : ""}</span> : null}
-                        <span className={`role-badge ${senderRole}`}>{senderRole}</span>
-                        <span className="time">{formatTime(message.ts)}</span>
-                        {message.editedAt ? <span className="edited-pill">edited</span> : null}
-                      </div>
-                      {message.replyTo ? (
-                        <div className="reply-preview">
-                          <strong>{message.replyTo.user || "Unknown"}</strong>
-                          <span>{message.replyTo.text || ""}</span>
-                        </div>
-                      ) : null}
-                      <p className="text">{message.text}</p>
-                      {(canEdit || canDelete) ? (
-                        <div className="message-actions">
-                          {canEdit ? <button type="button" onClick={() => performMessageAction("edit", message)}>Edit</button> : null}
-                          {canDelete ? <button type="button" onClick={() => performMessageAction("delete", message)}>Delete</button> : null}
-                        </div>
-                      ) : null}
-                    </article>
-                  );
-                })}
-              </div>
-
-              <form className="composer" onSubmit={onSubmit}>
-                {replyTo ? (
-                  <div className="replying-strip">
-                    <span>Replying to {replyTo.user}: {replyTo.text}</span>
-                    <button type="button" onClick={() => setReplyTo(null)}>Cancel</button>
+                          {message.replyTo ? (
+                            <div className="reply-preview">
+                              <strong>{message.replyTo.user || "Unknown"}</strong>
+                              <span>{message.replyTo.text || ""}</span>
+                            </div>
+                          ) : null}
+                          <p className="text">{message.text}</p>
+                          {(canEdit || canDelete) ? (
+                            <div className="message-actions">
+                              {canEdit ? <button type="button" onClick={() => performMessageAction("edit", message)}>Edit</button> : null}
+                              {canDelete ? <button type="button" onClick={() => performMessageAction("delete", message)}>Delete</button> : null}
+                            </div>
+                          ) : null}
+                        </article>
+                      );
+                    })}
                   </div>
-                ) : null}
-                <input
-                  type="text"
-                  maxLength={500}
-                  placeholder={status.includes("muted") ? "You are muted" : "Write a message..."}
-                  autoComplete="off"
-                  value={text}
-                  onChange={(event) => {
-                    setText(event.target.value);
-                    postTyping(true);
-                    if (typingOffTimerRef.current) {
-                      window.clearTimeout(typingOffTimerRef.current);
-                    }
-                    typingOffTimerRef.current = window.setTimeout(() => {
-                      postTyping(false);
-                    }, 1200);
-                  }}
-                  disabled={status.includes("muted")}
-                  required
-                />
-                <button type="submit" disabled={status.includes("muted")}>Send</button>
-              </form>
 
-              <div className="settings-row">
-                <label htmlFor="soundMode">Notification sound:</label>
-                <select id="soundMode" value={soundMode} onChange={(event) => setSoundMode(event.target.value)}>
-                  <option value="all">All messages</option>
-                  <option value="mention">Mentions only</option>
-                  <option value="off">Off</option>
-                </select>
+                  <form className="composer" onSubmit={onSubmit}>
+                    {replyTo ? (
+                      <div className="replying-strip">
+                        <span>Replying to {replyTo.user}: {replyTo.text}</span>
+                        <button type="button" onClick={() => setReplyTo(null)}>Cancel</button>
+                      </div>
+                    ) : null}
+                    <input
+                      type="text"
+                      maxLength={500}
+                      placeholder={status.includes("muted") ? "You are muted" : "Write a message..."}
+                      autoComplete="off"
+                      value={text}
+                      onChange={(event) => {
+                        setText(event.target.value);
+                        postTyping(true);
+                        if (typingOffTimerRef.current) {
+                          window.clearTimeout(typingOffTimerRef.current);
+                        }
+                        typingOffTimerRef.current = window.setTimeout(() => {
+                          postTyping(false);
+                        }, 1200);
+                      }}
+                      disabled={status.includes("muted")}
+                      required
+                    />
+                    <button type="submit" disabled={status.includes("muted")}>Send</button>
+                  </form>
+
+                  <p className={`status ${statusMode}`.trim()}>
+                    {status} {storage === "kv" ? "(persistent storage)" : "(temporary memory mode)"}
+                  </p>
+                </section>
+
+                <aside className="chat-side chat-side-right">
+                  {roleCanModerate(role) ? (
+                    <div className="moderation-stack">
+                      <h3>Quick Controls</h3>
+                      <div className="moderation-bar">
+                        <select
+                          className="moderation-select"
+                          value={selectedTarget}
+                          onChange={(event) => setSelectedTarget(event.target.value)}
+                        >
+                          <option value="">Select user...</option>
+                          {participantList
+                            .filter((participant) => participant.toLowerCase() !== String(user).toLowerCase())
+                            .map((participant) => (
+                              <option key={participant} value={participant}>{participant}</option>
+                            ))}
+                        </select>
+                        <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("mute")}>Mute</button>
+                        <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute")}>Unmute</button>
+                        <button type="button" className="ghost-btn" onClick={() => moderateUser("kick")}>Kick</button>
+                        <button type="button" className="ghost-btn" onClick={() => moderateUser("unkick")}>Unkick</button>
+                        {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("ban")}>Ban</button> : null}
+                        {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateUser("unban")}>Unban</button> : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {(roleCanModerate(role)) && (moderationInfo.muted?.length || moderationInfo.kicked?.length || moderationInfo.banned?.length) ? (
+                    <div className="moderation-lists">
+                      <span>Muted: {moderationInfo.muted?.join(", ") || "none"}</span>
+                      <span>Kicked: {moderationInfo.kicked?.join(", ") || "none"}</span>
+                      <span>Banned: {moderationInfo.banned?.join(", ") || "none"}</span>
+                    </div>
+                  ) : null}
+
+                  <div className="settings-row">
+                    <label htmlFor="soundMode">Notification sound:</label>
+                    <select id="soundMode" value={soundMode} onChange={(event) => setSoundMode(event.target.value)}>
+                      <option value="all">All messages</option>
+                      <option value="mention">Mentions only</option>
+                      <option value="off">Off</option>
+                    </select>
+                  </div>
+
+                  {roleCanModerate(role) && moderationInfo.log?.length ? (
+                    <details className="moderation-log">
+                      <summary>Moderation Log</summary>
+                      <ul>
+                        {moderationInfo.log.slice(-8).reverse().map((entry) => (
+                          <li key={entry.id}>{entry.actor} {entry.action} {entry.target} ({formatTime(entry.ts)})</li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
+                </aside>
               </div>
-
-              {role === "host" && moderationInfo.log?.length ? (
-                <details className="moderation-log">
-                  <summary>Moderation Log</summary>
-                  <ul>
-                    {moderationInfo.log.slice(-8).reverse().map((entry) => (
-                      <li key={entry.id}>{entry.actor} {entry.action} {entry.target} ({formatTime(entry.ts)})</li>
-                    ))}
-                  </ul>
-                </details>
-              ) : null}
-
-              <p className={`status ${statusMode}`.trim()}>
-                {status} {storage === "kv" ? "(persistent storage)" : "(temporary memory mode)"}
-              </p>
             </section>
           </>
         )}
