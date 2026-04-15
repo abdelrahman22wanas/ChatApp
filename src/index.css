@@ -143,9 +143,31 @@ body {
 
 .chat-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(250px, 310px);
+  grid-template-columns: minmax(220px, var(--left-panel-width, 300px)) 10px minmax(0, 1fr) 10px minmax(220px, var(--right-panel-width, 280px));
   gap: 12px;
   min-height: 0;
+}
+
+.pane-resizer {
+  position: relative;
+  cursor: col-resize;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.15);
+}
+
+.pane-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 20% 35%;
+  border-radius: 999px;
+  background: rgba(45, 212, 191, 0.35);
+}
+
+.pane-resizer:hover,
+.pane-resizer.active {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: rgba(56, 189, 248, 0.5);
 }
 
 .chat-side {
@@ -794,5 +816,15 @@ body {
 
   .composer button {
     width: 100%;
+  }
+}
+
+@media (max-width: 1100px) {
+  .chat-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .pane-resizer {
+    display: none;
   }
 }

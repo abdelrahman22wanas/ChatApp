@@ -6,6 +6,8 @@ const ROOM_KEY = "chatapp.web.room";
 const MODE_KEY = "chatapp.web.mode";
 const ROLE_KEY = "chatapp.web.role";
 const SOUND_MODE_KEY = "chatapp.web.soundMode";
+const LEFT_PANEL_WIDTH_KEY = "chatapp.web.leftPanelWidth";
+const RIGHT_PANEL_WIDTH_KEY = "chatapp.web.rightPanelWidth";
 
 function roomCacheKey(room) {
   return `chatapp.web.room.messages.${room}`;
@@ -62,6 +64,15 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   const [replyTo, setReplyTo] = useState(null);
   const [showMemberControls, setShowMemberControls] = useState(false);
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, message: null });
+  const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
+    const value = Number(localStorage.getItem(LEFT_PANEL_WIDTH_KEY) || 300);
+    return Number.isFinite(value) ? value : 300;
+  });
+  const [rightPanelWidth, setRightPanelWidth] = useState(() => {
+    const value = Number(localStorage.getItem(RIGHT_PANEL_WIDTH_KEY) || 280);
+    return Number.isFinite(value) ? value : 280;
+  });
+  const [activeResizer, setActiveResizer] = useState("");
   const [soundMode, setSoundMode] = useState(() => localStorage.getItem(SOUND_MODE_KEY) || "all");
   const [status, setStatus] = useState("Set your name and start or join a room.");
   const [statusMode, setStatusMode] = useState("");
@@ -70,6 +81,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   const hasLoadedMessagesRef = useRef(false);
   const lastMessageIdRef = useRef("");
   const inactivityTimerRef = useRef(null);
+  const chatLayoutRef = useRef(null);
 
   const TAB_INACTIVE_MS = 3 * 60 * 1000;
   const typingOffTimerRef = useRef(null);
@@ -550,6 +562,60 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   }, [soundMode]);
 
   useEffect(() => {
+    localStorage.setItem(LEFT_PANEL_WIDTH_KEY, String(Math.round(leftPanelWidth)));
+  }, [leftPanelWidth]);
+
+  useEffect(() => {
+    localStorage.setItem(RIGHT_PANEL_WIDTH_KEY, String(Math.round(rightPanelWidth)));
+  }, [rightPanelWidth]);
+
+  useEffect(() => {
+    if (!activeResizer) {
+      return;
+    }
+
+    function onPointerMove(event) {
+      if (!chatLayoutRef.current) {
+        return;
+      }
+
+      const bounds = chatLayoutRef.current.getBoundingClientRect();
+      const minSide = 220;
+      const minCenter = 360;
+
+      if (activeResizer === "left") {
+        const maxLeft = Math.max(minSide, bounds.width - rightPanelWidth - minCenter - 16);
+        const proposed = event.clientX - bounds.left;
+        const clamped = Math.max(minSide, Math.min(maxLeft, proposed));
+        setLeftPanelWidth(clamped);
+      }
+
+      if (activeResizer === "right") {
+        const maxRight = Math.max(minSide, bounds.width - leftPanelWidth - minCenter - 16);
+        const proposed = bounds.right - event.clientX;
+        const clamped = Math.max(minSide, Math.min(maxRight, proposed));
+        setRightPanelWidth(clamped);
+      }
+    }
+
+    function stopResizing() {
+      setActiveResizer("");
+    }
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResizing);
+
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+    };
+  }, [activeResizer, leftPanelWidth, rightPanelWidth]);
+
+  useEffect(() => {
     function onPointerDown() {
       if (contextMenu.visible) {
         closeContextMenu();
@@ -862,7 +928,14 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                 <span className="presence-users">{onlineUsers.length ? onlineUsers.join(", ") : "No active users"}</span>
                 {typingUsers.length ? <span className="typing-indicator">• {typingUsers.join(", ")} typing...</span> : null}
               </div>
-              <div className="chat-layout">
+              <div
+                className="chat-layout"
+                ref={chatLayoutRef}
+                style={{
+                  "--left-panel-width": `${leftPanelWidth}px`,
+                  "--right-panel-width": `${rightPanelWidth}px`
+                }}
+              >
                 <aside className="chat-side chat-side-left">
                   <section className="members-sidebar" aria-label="Members">
                     <div className="members-sidebar-head">
@@ -913,6 +986,17 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                     </div>
                   </section>
                 </aside>
+
+                <div
+                  className={`pane-resizer ${activeResizer === "left" ? "active" : ""}`.trim()}
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize left panel"
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    setActiveResizer("left");
+                  }}
+                />
 
                 <section className="chat-main">
                   <div ref={messagesRef} className="messages" aria-live="polite" aria-label="Chat messages">
@@ -989,6 +1073,17 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                     {status} {storage === "kv" ? "(persistent storage)" : "(temporary memory mode)"}
                   </p>
                 </section>
+
+                <div
+                  className={`pane-resizer ${activeResizer === "right" ? "active" : ""}`.trim()}
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize right panel"
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    setActiveResizer("right");
+                  }}
+                />
 
                 <aside className="chat-side chat-side-right">
                   {roleCanModerate(role) ? (
