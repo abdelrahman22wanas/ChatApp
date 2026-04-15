@@ -60,6 +60,7 @@ module.exports = async (req, res) => {
       const user = safeText(payload.user, 32);
       const room = safeText(payload.room, 24).toLowerCase();
       const role = normalizeRole(payload.role);
+      const to = safeText(payload.to, 32);
       const text = safeText(payload.text, 500);
 
       if (!user || !room || !text) {
@@ -71,6 +72,7 @@ module.exports = async (req, res) => {
       const result = await appendMessage({
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         user,
+        to,
         room,
         role,
         text,

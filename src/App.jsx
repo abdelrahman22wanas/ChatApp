@@ -5,6 +5,7 @@ const USER_KEY = "chatapp.web.user";
 const ROOM_KEY = "chatapp.web.room";
 const MODE_KEY = "chatapp.web.mode";
 const ROLE_KEY = "chatapp.web.role";
+const SOUND_MODE_KEY = "chatapp.web.soundMode";
 
 function roomCacheKey(room) {
   return `chatapp.web.room.messages.${room}`;
@@ -15,6 +16,20 @@ function formatTime(value) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isMentionedMessage(text, username) {
+  const cleanUser = String(username || "").trim();
+  if (!cleanUser) {
+    return false;
+  }
+
+  const mentionRegex = new RegExp(`(^|\\s)@${escapeRegExp(cleanUser)}(\\b|$)`, "i");
+  return mentionRegex.test(String(text || ""));
 }
 
 export default function App() {
@@ -33,12 +48,20 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [selectedTarget, setSelectedTarget] = useState("");
   const [text, setText] = useState("");
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [typingUsers, setTypingUsers] = useState([]);
+  const [moderationInfo, setModerationInfo] = useState({ muted: [], banned: [], log: [] });
+  const [soundMode, setSoundMode] = useState(() => localStorage.getItem(SOUND_MODE_KEY) || "all");
   const [status, setStatus] = useState("Set your name and start or join a room.");
   const [statusMode, setStatusMode] = useState("");
   const [storage, setStorage] = useState("memory");
   const messagesRef = useRef(null);
   const hasLoadedMessagesRef = useRef(false);
   const lastMessageIdRef = useRef("");
+  const inactivityTimerRef = useRef(null);
+
+  const TAB_INACTIVE_MS = 3 * 60 * 1000;
+  const typingOffTimerRef = useRef(null);
 
   const participantCount = useMemo(() => {
     const participants = new Set();
@@ -101,6 +124,16 @@ export default function App() {
     }
   }
 
+  function shouldPlaySoundForMessage(message) {
+    if (soundMode === "off") {
+      return false;
+    }
+    if (soundMode === "mention") {
+      return isMentionedMessage(message?.text, user);
+    }
+    return true;
+  }
+
   function normalizeRoom(value) {
     const cleaned = String(value || "")
       .trim()
@@ -158,7 +191,10 @@ export default function App() {
   }
 
   async function fetchMessages() {
-    const response = await fetch(`/api/messages?room=${encodeURIComponent(room)}`, { cache: "no-store" });
+    const response = await fetch(
+      `/api/messages?room=${encodeURIComponent(room)}&user=${encodeURIComponent(user)}`,
+      { cache: "no-store" }
+    );
 
     if (!response.ok) {
       throw new Error(`Unable to load messages (${response.status})`);
@@ -177,6 +213,9 @@ export default function App() {
     }
 
     setMessages(nextMessages);
+    setOnlineUsers(payload.onlineUsers || []);
+    setTypingUsers(payload.typingUsers || []);
+    setModerationInfo(payload.moderation || { muted: [], banned: [], log: [] });
     if (room) {
       localStorage.setItem(roomCacheKey(room), JSON.stringify(nextMessages));
     }
@@ -193,6 +232,30 @@ export default function App() {
       applyStatus("You are muted in this room.", "warn");
     } else {
       applyStatus(`Connected as ${user} in room ${room}`);
+    }
+  }
+
+  async function postPresence(active) {
+    try {
+      await fetch("/api/presence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room, user, active })
+      });
+    } catch (error) {
+      // Silent presence failures should not break chat.
+    }
+  }
+
+  async function postTyping(active) {
+    try {
+      await fetch("/api/typing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room, user, active })
+      });
+    } catch (error) {
+      // Silent typing failures should not break chat.
     }
   }
 
@@ -271,10 +334,16 @@ export default function App() {
 
     refresh();
     const timer = window.setInterval(refresh, POLL_MS);
+    postPresence(true);
+    const presenceBeat = window.setInterval(() => {
+      postPresence(true);
+    }, 10000);
 
     return () => {
       active = false;
       window.clearInterval(timer);
+      window.clearInterval(presenceBeat);
+      postPresence(false);
     };
   }, [user, room, isReady]);
 
@@ -286,7 +355,8 @@ export default function App() {
   }, [messages]);
 
   useEffect(() => {
-    const latestId = messages.length ? String(messages[messages.length - 1].id || "") : "";
+    const latestMessage = messages.length ? messages[messages.length - 1] : null;
+    const latestId = latestMessage ? String(latestMessage.id || "") : "";
 
     if (!hasLoadedMessagesRef.current) {
       hasLoadedMessagesRef.current = true;
@@ -294,11 +364,18 @@ export default function App() {
       return;
     }
 
-    if (latestId && latestId !== lastMessageIdRef.current) {
+    if (latestId && latestId !== lastMessageIdRef.current && shouldPlaySoundForMessage(latestMessage)) {
       playNotificationSound();
       lastMessageIdRef.current = latestId;
+      return;
     }
+
+    lastMessageIdRef.current = latestId;
   }, [messages]);
+
+  useEffect(() => {
+    localStorage.setItem(SOUND_MODE_KEY, soundMode);
+  }, [soundMode]);
 
   useEffect(() => {
     if (isReady || !savedUser || !savedRoom || autoRejoinSeconds <= 0) {
@@ -317,26 +394,57 @@ export default function App() {
   }, [autoRejoinSeconds, isReady, savedMode, savedRoom, savedUser]);
 
   useEffect(() => {
-    function handlePageHide() {
-      if (isReady) {
-        leaveRoom(true);
+    function clearInactivityTimer() {
+      if (inactivityTimerRef.current) {
+        window.clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
       }
+    }
+
+    function scheduleInactivityLeave() {
+      if (!isReady) {
+        return;
+      }
+
+      clearInactivityTimer();
+      applyStatus("Tab inactive. Room session will close in 3 minutes if you do not return.", "warn");
+
+      inactivityTimerRef.current = window.setTimeout(() => {
+        leaveRoom(true, "Room session closed after 3 minutes of tab inactivity.");
+      }, TAB_INACTIVE_MS);
     }
 
     function handleVisibilityChange() {
-      if (document.hidden && isReady) {
-        leaveRoom(true);
+      if (!isReady) {
+        clearInactivityTimer();
+        return;
+      }
+
+      if (document.hidden) {
+        scheduleInactivityLeave();
+      } else {
+        clearInactivityTimer();
+        applyStatus(`Connected as ${user} in room ${room}`);
       }
     }
 
-    window.addEventListener("pagehide", handlePageHide);
+    function handleWindowFocus() {
+      if (!isReady) {
+        return;
+      }
+      clearInactivityTimer();
+      applyStatus(`Connected as ${user} in room ${room}`);
+    }
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleWindowFocus);
 
     return () => {
-      window.removeEventListener("pagehide", handlePageHide);
+      clearInactivityTimer();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleWindowFocus);
     };
-  }, [isReady]);
+  }, [isReady, room, user]);
 
   async function onSubmit(event) {
     event.preventDefault();
@@ -347,9 +455,68 @@ export default function App() {
     }
 
     setText("");
+    postTyping(false);
+
+    let payload = {
+      user,
+      room,
+      role,
+      text: nextText
+    };
+
+    if (nextText.toLowerCase().startsWith("/dm ")) {
+      const parts = nextText.split(" ");
+      const target = (parts[1] || "").trim();
+      const dmBody = parts.slice(2).join(" ").trim();
+      if (!target || !dmBody) {
+        applyStatus("Usage: /dm username your message", "warn");
+        return;
+      }
+      payload = {
+        ...payload,
+        to: target,
+        text: dmBody
+      };
+    }
 
     try {
-      await sendMessage(nextText);
+      const response = await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || `Send failed (${response.status})`);
+      }
+
+      await fetchMessages();
+    } catch (error) {
+      applyStatus(error.message, "error");
+    }
+  }
+
+  async function performMessageAction(action, message) {
+    try {
+      const response = await fetch("/api/message-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          room,
+          actor: user,
+          actorRole: role,
+          action,
+          messageId: message.id,
+          text: action === "edit" ? window.prompt("Edit message", message.text || "") || "" : ""
+        })
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || `Action failed (${response.status})`);
+      }
+
       await fetchMessages();
     } catch (error) {
       applyStatus(error.message, "error");
@@ -385,6 +552,11 @@ export default function App() {
   }
 
   function leaveRoom(fromLifecycle = false, customMessage) {
+    if (inactivityTimerRef.current) {
+      window.clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+
     localStorage.removeItem(ROOM_KEY);
     localStorage.removeItem(ROLE_KEY);
     setIsReady(false);
@@ -395,7 +567,7 @@ export default function App() {
     setMessages([]);
     setAutoRejoinSeconds(0);
     if (fromLifecycle) {
-      applyStatus("You left the room because the tab was hidden or closed.", "warn");
+      applyStatus(customMessage || "Room session closed after inactivity.", "warn");
       return;
     }
     if (customMessage) {
@@ -497,22 +669,57 @@ export default function App() {
                       ))}
                   </select>
                   <button type="button" className="ghost-btn" onClick={() => moderateUser("mute")}>Mute</button>
+                  <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute")}>Unmute</button>
                   <button type="button" className="ghost-btn" onClick={() => moderateUser("kick")}>Kick</button>
                   <button type="button" className="ghost-btn" onClick={() => moderateUser("ban")}>Ban</button>
+                  <button type="button" className="ghost-btn" onClick={() => moderateUser("unban")}>Unban</button>
+                </div>
+              ) : null}
+
+              <div className="presence-strip">
+                <span className="presence-label">Online:</span>
+                <span className="presence-users">{onlineUsers.length ? onlineUsers.join(", ") : "No active users"}</span>
+                {typingUsers.length ? <span className="typing-indicator">• {typingUsers.join(", ")} typing...</span> : null}
+              </div>
+
+              {role === "host" && (moderationInfo.muted?.length || moderationInfo.banned?.length) ? (
+                <div className="moderation-lists">
+                  <span>Muted: {moderationInfo.muted?.join(", ") || "none"}</span>
+                  <span>Banned: {moderationInfo.banned?.join(", ") || "none"}</span>
                 </div>
               ) : null}
 
               <div ref={messagesRef} className="messages" aria-live="polite" aria-label="Chat messages">
-                {messages.map((message) => (
-                  <article className="bubble" key={message.id}>
-                    <div className="meta">
-                      <strong className="user">{message.user}</strong>
-                      <span className={`role-badge ${String(message.role || "member")}`}>{String(message.role || "member")}</span>
-                      <span className="time">{formatTime(message.ts)}</span>
-                    </div>
-                    <p className="text">{message.text}</p>
-                  </article>
-                ))}
+                {messages.map((message, index) => {
+                  const isMine = String(message.user || "").toLowerCase() === String(user || "").toLowerCase();
+                  const isMentioned = isMentionedMessage(message.text, user) && !isMine;
+                  const bubbleClass = `bubble ${isMine ? "mine" : "other"} ${isMentioned ? "mention" : ""} ${message.type === "dm" ? "dm" : ""}`.trim();
+                  const canEdit = isMine && !message.deleted;
+                  const canDelete = (isMine || role === "host") && !message.deleted;
+
+                  return (
+                    <article
+                      className={bubbleClass}
+                      key={message.id}
+                      style={{ animationDelay: `${Math.min(index * 24, 280)}ms` }}
+                    >
+                      <div className="meta">
+                        <strong className="user">{message.user}</strong>
+                        {message.type === "dm" ? <span className="dm-pill">DM {message.to ? `to ${message.to}` : ""}</span> : null}
+                        <span className={`role-badge ${String(message.role || "member")}`}>{String(message.role || "member")}</span>
+                        <span className="time">{formatTime(message.ts)}</span>
+                        {message.editedAt ? <span className="edited-pill">edited</span> : null}
+                      </div>
+                      <p className="text">{message.text}</p>
+                      {(canEdit || canDelete) ? (
+                        <div className="message-actions">
+                          {canEdit ? <button type="button" onClick={() => performMessageAction("edit", message)}>Edit</button> : null}
+                          {canDelete ? <button type="button" onClick={() => performMessageAction("delete", message)}>Delete</button> : null}
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
               </div>
 
               <form className="composer" onSubmit={onSubmit}>
@@ -522,12 +729,41 @@ export default function App() {
                   placeholder={status.includes("muted") ? "You are muted" : "Write a message..."}
                   autoComplete="off"
                   value={text}
-                  onChange={(event) => setText(event.target.value)}
+                  onChange={(event) => {
+                    setText(event.target.value);
+                    postTyping(true);
+                    if (typingOffTimerRef.current) {
+                      window.clearTimeout(typingOffTimerRef.current);
+                    }
+                    typingOffTimerRef.current = window.setTimeout(() => {
+                      postTyping(false);
+                    }, 1200);
+                  }}
                   disabled={status.includes("muted")}
                   required
                 />
                 <button type="submit" disabled={status.includes("muted")}>Send</button>
               </form>
+
+              <div className="settings-row">
+                <label htmlFor="soundMode">Notification sound:</label>
+                <select id="soundMode" value={soundMode} onChange={(event) => setSoundMode(event.target.value)}>
+                  <option value="all">All messages</option>
+                  <option value="mention">Mentions only</option>
+                  <option value="off">Off</option>
+                </select>
+              </div>
+
+              {role === "host" && moderationInfo.log?.length ? (
+                <details className="moderation-log">
+                  <summary>Moderation Log</summary>
+                  <ul>
+                    {moderationInfo.log.slice(-8).reverse().map((entry) => (
+                      <li key={entry.id}>{entry.actor} {entry.action} {entry.target} ({formatTime(entry.ts)})</li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
 
               <p className={`status ${statusMode}`.trim()}>
                 {status} {storage === "kv" ? "(persistent storage)" : "(temporary memory mode)"}
