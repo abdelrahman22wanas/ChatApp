@@ -11,10 +11,24 @@ function safeText(value, max) {
   return String(value || "").trim().slice(0, max);
 }
 
+function readRoomFromReq(req) {
+  if (req.query && typeof req.query.room === "string") {
+    return safeText(req.query.room, 24).toLowerCase();
+  }
+
+  try {
+    const fullUrl = new URL(req.url, "http://localhost");
+    return safeText(fullUrl.searchParams.get("room"), 24).toLowerCase();
+  } catch (error) {
+    return "";
+  }
+}
+
 module.exports = async (req, res) => {
   try {
     if (req.method === "GET") {
-      const result = await listMessages();
+      const room = readRoomFromReq(req);
+      const result = await listMessages(room);
       return json(res, 200, result);
     }
 
@@ -22,17 +36,19 @@ module.exports = async (req, res) => {
       const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
 
       const user = safeText(payload.user, 32);
+      const room = safeText(payload.room, 24).toLowerCase();
       const text = safeText(payload.text, 500);
 
-      if (!user || !text) {
+      if (!user || !room || !text) {
         return json(res, 400, {
-          error: "Both user and text are required."
+          error: "User, room, and text are required."
         });
       }
 
       const result = await appendMessage({
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         user,
+        room,
         text,
         ts: new Date().toISOString()
       });

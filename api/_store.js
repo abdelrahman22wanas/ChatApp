@@ -91,17 +91,29 @@ function normalizeMessages(messages) {
   return messages.slice(-MEMORY_LIMIT);
 }
 
-async function listMessages() {
+function normalizeRoom(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 24);
+}
+
+async function listMessages(room) {
+  const normalizedRoom = normalizeRoom(room);
+
   if (hasKvConfig()) {
+    const allMessages = normalizeMessages(await readFromKv());
     return {
       storage: "kv",
-      messages: normalizeMessages(await readFromKv())
+      messages: normalizedRoom ? allMessages.filter((message) => normalizeRoom(message.room) === normalizedRoom) : allMessages
     };
   }
 
+  const allMessages = normalizeMessages(readFromMemory());
   return {
     storage: "memory",
-    messages: normalizeMessages(readFromMemory())
+    messages: normalizedRoom ? allMessages.filter((message) => normalizeRoom(message.room) === normalizedRoom) : allMessages
   };
 }
 
@@ -109,6 +121,7 @@ async function appendMessage(message) {
   const next = {
     id: message.id,
     user: message.user,
+    room: normalizeRoom(message.room),
     text: message.text,
     ts: message.ts
   };
