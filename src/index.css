@@ -30,6 +30,32 @@ body {
   overflow-x: hidden;
 }
 
+/* Unified themed scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 189, 248, 0.45) rgba(5, 20, 35, 0.82);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(5, 20, 35, 0.82);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(45, 212, 191, 0.75), rgba(56, 189, 248, 0.75));
+  border-radius: 999px;
+  border: 2px solid rgba(5, 20, 35, 0.82);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(45, 212, 191, 0.95), rgba(56, 189, 248, 0.95));
+}
+
 .orb {
   position: fixed;
   width: 340px;
