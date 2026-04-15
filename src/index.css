@@ -143,7 +143,7 @@ body {
 
 .chat-layout {
   display: grid;
-  grid-template-columns: minmax(220px, var(--left-panel-width, 300px)) 10px minmax(0, 1fr) 10px minmax(220px, var(--right-panel-width, 280px));
+  grid-template-columns: minmax(220px, var(--left-panel-width, 300px)) 10px minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
 }

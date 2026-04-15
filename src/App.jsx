@@ -7,7 +7,6 @@ const MODE_KEY = "chatapp.web.mode";
 const ROLE_KEY = "chatapp.web.role";
 const SOUND_MODE_KEY = "chatapp.web.soundMode";
 const LEFT_PANEL_WIDTH_KEY = "chatapp.web.leftPanelWidth";
-const RIGHT_PANEL_WIDTH_KEY = "chatapp.web.rightPanelWidth";
 
 function roomCacheKey(room) {
   return `chatapp.web.room.messages.${room}`;
@@ -62,35 +61,16 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     log: []
   });
   const [replyTo, setReplyTo] = useState(null);
-  const [showMemberControls, setShowMemberControls] = useState(false);
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, message: null });
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
     const value = Number(localStorage.getItem(LEFT_PANEL_WIDTH_KEY) || 300);
     return Number.isFinite(value) ? value : 300;
-  });
-  const [rightPanelWidth, setRightPanelWidth] = useState(() => {
-    const value = Number(localStorage.getItem(RIGHT_PANEL_WIDTH_KEY) || 280);
-    return Number.isFinite(value) ? value : 280;
   });
   const [activeResizer, setActiveResizer] = useState("");
   const [soundMode, setSoundMode] = useState(() => localStorage.getItem(SOUND_MODE_KEY) || "all");
   const [status, setStatus] = useState("Set your name and start or join a room.");
   const [statusMode, setStatusMode] = useState("");
   const [storage, setStorage] = useState("memory");
-  const messagesRef = useRef(null);
-  const hasLoadedMessagesRef = useRef(false);
-  const lastMessageIdRef = useRef("");
-  const inactivityTimerRef = useRef(null);
-  const chatLayoutRef = useRef(null);
-
-  const TAB_INACTIVE_MS = 3 * 60 * 1000;
-  const typingOffTimerRef = useRef(null);
-
-  const participantCount = useMemo(() => onlineUsers.length, [onlineUsers]);
-
-  const participantList = useMemo(() => {
-    return [...onlineUsers].sort((a, b) => a.localeCompare(b));
-  }, [onlineUsers]);
 
   const memberDirectory = useMemo(() => {
     const users = new Map();
@@ -114,8 +94,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       users.set(String(kickedUser).toLowerCase(), kickedUser);
     }
 
-    const ordered = [...users.values()].sort((a, b) => a.localeCompare(b));
-    return ordered;
+    return [...users.values()].sort((a, b) => a.localeCompare(b));
   }, [messages, moderationInfo, onlineUsers]);
 
   function memberRole(memberName) {
@@ -566,10 +545,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
   }, [leftPanelWidth]);
 
   useEffect(() => {
-    localStorage.setItem(RIGHT_PANEL_WIDTH_KEY, String(Math.round(rightPanelWidth)));
-  }, [rightPanelWidth]);
-
-  useEffect(() => {
     if (!activeResizer) {
       return;
     }
@@ -584,17 +559,10 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       const minCenter = 360;
 
       if (activeResizer === "left") {
-        const maxLeft = Math.max(minSide, bounds.width - rightPanelWidth - minCenter - 16);
+        const maxLeft = Math.max(minSide, bounds.width - minCenter - 16);
         const proposed = event.clientX - bounds.left;
         const clamped = Math.max(minSide, Math.min(maxLeft, proposed));
         setLeftPanelWidth(clamped);
-      }
-
-      if (activeResizer === "right") {
-        const maxRight = Math.max(minSide, bounds.width - leftPanelWidth - minCenter - 16);
-        const proposed = bounds.right - event.clientX;
-        const clamped = Math.max(minSide, Math.min(maxRight, proposed));
-        setRightPanelWidth(clamped);
       }
     }
 
@@ -613,7 +581,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", stopResizing);
     };
-  }, [activeResizer, leftPanelWidth, rightPanelWidth]);
+  }, [activeResizer, leftPanelWidth]);
 
   useEffect(() => {
     function onPointerDown() {
@@ -826,7 +794,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
     setRole("member");
     setRoomInput("");
     setSelectedTarget("");
-    setShowMemberControls(false);
     setReplyTo(null);
     closeContextMenu();
     setMessages([]);
@@ -912,9 +879,6 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                 </p>
               </div>
               <div className="topbar-actions">
-                {roleCanModerate(role) ? (
-                  <button className="ghost-btn" type="button" onClick={() => setShowMemberControls(true)}>Member Controls</button>
-                ) : null}
                 {mode === "host" ? (
                   <button className="ghost-btn" type="button" onClick={copyRoomCode}>Copy Room Code</button>
                 ) : null}
@@ -932,12 +896,11 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                 className="chat-layout"
                 ref={chatLayoutRef}
                 style={{
-                  "--left-panel-width": `${leftPanelWidth}px`,
-                  "--right-panel-width": `${rightPanelWidth}px`
+                  "--left-panel-width": `${leftPanelWidth}px`
                 }}
               >
                 <aside className="chat-side chat-side-left">
-                  <section className="members-sidebar" aria-label="Members">
+                  <section className="members-sidebar" aria-label="Members and controls">
                     <div className="members-sidebar-head">
                       <strong>Members</strong>
                       <span>{memberDirectory.length}</span>
@@ -984,6 +947,58 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                         );
                       })}
                     </div>
+
+                    {roleCanModerate(role) ? (
+                      <div className="member-controls-inline">
+                        <h3>Quick Controls</h3>
+                        <div className="moderation-bar">
+                          <select
+                            className="moderation-select"
+                            value={selectedTarget}
+                            onChange={(event) => setSelectedTarget(event.target.value)}
+                          >
+                            <option value="">Select user...</option>
+                            {participantList
+                              .filter((participant) => participant.toLowerCase() !== String(user).toLowerCase())
+                              .map((participant) => (
+                                <option key={participant} value={participant}>{participant}</option>
+                              ))}
+                          </select>
+                          <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("mute")}>Mute</button>
+                          <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute")}>Unmute</button>
+                          <button type="button" className="ghost-btn" onClick={() => moderateUser("kick")}>Kick</button>
+                          <button type="button" className="ghost-btn" onClick={() => moderateUser("unkick")}>Unkick</button>
+                          {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("ban")}>Ban</button> : null}
+                          {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateUser("unban")}>Unban</button> : null}
+                        </div>
+                        {roleCanManageRoles(role) ? (
+                          <div className="member-role-actions member-role-actions-compact">
+                            <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", selectedTarget, { targetRole: "moderator" })}>Make Moderator</button>
+                            <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", selectedTarget, { targetRole: "cohost" })}>Make Co-host</button>
+                            <button type="button" className="ghost-btn" onClick={() => moderateUser("clearrole", selectedTarget)}>Set Member</button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {(roleCanModerate(role)) && (moderationInfo.muted?.length || moderationInfo.kicked?.length || moderationInfo.banned?.length) ? (
+                      <div className="moderation-lists">
+                        <span>Muted: {moderationInfo.muted?.join(", ") || "none"}</span>
+                        <span>Kicked: {moderationInfo.kicked?.join(", ") || "none"}</span>
+                        <span>Banned: {moderationInfo.banned?.join(", ") || "none"}</span>
+                      </div>
+                    ) : null}
+
+                    {roleCanModerate(role) && moderationInfo.log?.length ? (
+                      <details className="moderation-log">
+                        <summary>Moderation Log</summary>
+                        <ul>
+                          {moderationInfo.log.slice(-8).reverse().map((entry) => (
+                            <li key={entry.id}>{entry.actor} {entry.action} {entry.target} ({formatTime(entry.ts)})</li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
                   </section>
                 </aside>
 
@@ -991,7 +1006,7 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                   className={`pane-resizer ${activeResizer === "left" ? "active" : ""}`.trim()}
                   role="separator"
                   aria-orientation="vertical"
-                  aria-label="Resize left panel"
+                  aria-label="Resize members panel"
                   onPointerDown={(event) => {
                     event.preventDefault();
                     setActiveResizer("left");
@@ -1073,113 +1088,11 @@ export default function App({ authRequired = false, authUser = null, getToken = 
                     {status} {storage === "kv" ? "(persistent storage)" : "(temporary memory mode)"}
                   </p>
                 </section>
-
-                <div
-                  className={`pane-resizer ${activeResizer === "right" ? "active" : ""}`.trim()}
-                  role="separator"
-                  aria-orientation="vertical"
-                  aria-label="Resize right panel"
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    setActiveResizer("right");
-                  }}
-                />
-
-                <aside className="chat-side chat-side-right">
-                  {roleCanModerate(role) ? (
-                    <div className="moderation-stack">
-                      <h3>Quick Controls</h3>
-                      <div className="moderation-bar">
-                        <select
-                          className="moderation-select"
-                          value={selectedTarget}
-                          onChange={(event) => setSelectedTarget(event.target.value)}
-                        >
-                          <option value="">Select user...</option>
-                          {participantList
-                            .filter((participant) => participant.toLowerCase() !== String(user).toLowerCase())
-                            .map((participant) => (
-                              <option key={participant} value={participant}>{participant}</option>
-                            ))}
-                        </select>
-                        <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("mute")}>Mute</button>
-                        <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute")}>Unmute</button>
-                        <button type="button" className="ghost-btn" onClick={() => moderateUser("kick")}>Kick</button>
-                        <button type="button" className="ghost-btn" onClick={() => moderateUser("unkick")}>Unkick</button>
-                        {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("ban")}>Ban</button> : null}
-                        {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateUser("unban")}>Unban</button> : null}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {(roleCanModerate(role)) && (moderationInfo.muted?.length || moderationInfo.kicked?.length || moderationInfo.banned?.length) ? (
-                    <div className="moderation-lists">
-                      <span>Muted: {moderationInfo.muted?.join(", ") || "none"}</span>
-                      <span>Kicked: {moderationInfo.kicked?.join(", ") || "none"}</span>
-                      <span>Banned: {moderationInfo.banned?.join(", ") || "none"}</span>
-                    </div>
-                  ) : null}
-
-                  <div className="settings-row">
-                    <label htmlFor="soundMode">Notification sound:</label>
-                    <select id="soundMode" value={soundMode} onChange={(event) => setSoundMode(event.target.value)}>
-                      <option value="all">All messages</option>
-                      <option value="mention">Mentions only</option>
-                      <option value="off">Off</option>
-                    </select>
-                  </div>
-
-                  {roleCanModerate(role) && moderationInfo.log?.length ? (
-                    <details className="moderation-log">
-                      <summary>Moderation Log</summary>
-                      <ul>
-                        {moderationInfo.log.slice(-8).reverse().map((entry) => (
-                          <li key={entry.id}>{entry.actor} {entry.action} {entry.target} ({formatTime(entry.ts)})</li>
-                        ))}
-                      </ul>
-                    </details>
-                  ) : null}
-                </aside>
               </div>
             </section>
           </>
         )}
       </main>
-
-      {isReady && roleCanModerate(role) && showMemberControls ? (
-        <div className="member-controls-backdrop" onClick={() => setShowMemberControls(false)}>
-          <section className="member-controls-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="member-controls-header">
-              <h2>Member Controls</h2>
-              <button type="button" className="ghost-btn" onClick={() => setShowMemberControls(false)}>Close</button>
-            </div>
-            <div className="member-controls-grid">
-              {memberDirectory
-                .filter((participant) => participant.toLowerCase() !== String(user).toLowerCase())
-                .map((participant) => (
-                  <article className="member-row" key={participant}>
-                    <strong>{participant}</strong>
-                    <div className="member-row-actions">
-                      <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("mute", participant)}>Mute</button>
-                      <button type="button" className="ghost-btn" onClick={() => moderateUser("unmute", participant)}>Unmute</button>
-                      <button type="button" className="ghost-btn" onClick={() => moderateUser("kick", participant)}>Kick</button>
-                      <button type="button" className="ghost-btn" onClick={() => moderateUser("unkick", participant)}>Unkick</button>
-                      {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateWithOptionalDuration("ban", participant)}>Ban</button> : null}
-                      {roleCanBan(role) ? <button type="button" className="ghost-btn" onClick={() => moderateUser("unban", participant)}>Unban</button> : null}
-                    </div>
-                    {roleCanManageRoles(role) ? (
-                      <div className="member-row-actions">
-                        <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", participant, { targetRole: "moderator" })}>Make Moderator</button>
-                        <button type="button" className="ghost-btn" onClick={() => moderateUser("setrole", participant, { targetRole: "cohost" })}>Make Co-host</button>
-                        <button type="button" className="ghost-btn" onClick={() => moderateUser("clearrole", participant)}>Set Member</button>
-                      </div>
-                    ) : null}
-                  </article>
-                ))}
-            </div>
-          </section>
-        </div>
-      ) : null}
 
       {isReady && contextMenu.visible && contextMenu.message ? (
         <menu
