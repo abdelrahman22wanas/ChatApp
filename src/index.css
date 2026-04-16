@@ -138,6 +138,29 @@ body {
   margin-bottom: 14px;
 }
 
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-lockup-topbar {
+  margin-bottom: 4px;
+}
+
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  box-shadow: 0 8px 20px rgba(17, 35, 61, 0.18);
+}
+
+.brand-name {
+  margin: 0;
+  font-size: clamp(1.55rem, 3.8vw, 2rem);
+  letter-spacing: 0.02em;
+}
+
 .topbar h1,
 .entry-panel h1,
 .auth-card-web h1 {

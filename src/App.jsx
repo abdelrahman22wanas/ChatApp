@@ -1023,7 +1023,10 @@ export default function App({ authRequired = false, authUser = null, getToken = 
         </button>
         {!isReady ? (
           <section className="entry-panel">
-            <h1>ChatApp</h1>
+            <div className="brand-lockup">
+              <img src="/lumalink-logo.svg" alt="LumaLink logo" className="brand-logo" />
+              <h1 className="brand-name">LumaLink</h1>
+            </div>
             <p className="entry-subtitle">Enter your name, then choose to host a new room or join one.</p>
 
             <label className="entry-label" htmlFor="nameInput">Name</label>
@@ -1073,7 +1076,10 @@ export default function App({ authRequired = false, authUser = null, getToken = 
           <>
             <header className="topbar">
               <div>
-                <h1>ChatApp</h1>
+                <div className="brand-lockup brand-lockup-topbar">
+                  <img src="/lumalink-logo.svg" alt="LumaLink logo" className="brand-logo" />
+                  <h1 className="brand-name">LumaLink</h1>
+                </div>
                 <p>
                   Room: {room} • {participantCount} participant{participantCount === 1 ? "" : "s"} • You are
                   <span className={`role-badge ${role}`}>{role}</span>

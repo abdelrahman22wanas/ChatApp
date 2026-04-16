@@ -30,7 +30,10 @@ export default function AuthApp() {
       <SignedOut>
         <div className="auth-screen">
           <div className="auth-card-web">
-            <h1>ChatApp</h1>
+            <div className="brand-lockup">
+              <img src="/lumalink-logo.svg" alt="LumaLink logo" className="brand-logo" />
+              <h1 className="brand-name">LumaLink</h1>
+            </div>
             <p>Sign in to continue to rooms.</p>
             <SignIn routing="hash" />
           </div>
