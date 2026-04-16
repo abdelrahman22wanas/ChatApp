@@ -1,4 +1,4 @@
-# ChatApp
+# FluxRoom
 
 This repository now includes a Vercel-ready React chat app with serverless APIs.
 

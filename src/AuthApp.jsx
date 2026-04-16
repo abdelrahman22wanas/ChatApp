@@ -31,8 +31,8 @@ export default function AuthApp() {
         <div className="auth-screen">
           <div className="auth-card-web">
             <div className="brand-lockup">
-              <img src="/lumalink-logo.svg" alt="LumaLink logo" className="brand-logo" />
-              <h1 className="brand-name">LumaLink</h1>
+              <img src="/fluxroom-logo.svg" alt="FluxRoom logo" className="brand-logo" />
+              <h1 className="brand-name">FluxRoom</h1>
             </div>
             <p>Sign in to continue to rooms.</p>
             <SignIn routing="hash" />

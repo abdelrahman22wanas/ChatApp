@@ -1,8 +1,8 @@
 {
-  "name": "chatapp",
+  "name": "fluxroom",
   "private": true,
   "version": "1.0.0",
-  "description": "Vercel-ready ChatApp with serverless functions.",
+  "description": "Vercel-ready FluxRoom with serverless functions.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

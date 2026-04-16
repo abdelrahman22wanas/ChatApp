@@ -1024,8 +1024,8 @@ export default function App({ authRequired = false, authUser = null, getToken = 
         {!isReady ? (
           <section className="entry-panel">
             <div className="brand-lockup">
-              <img src="/lumalink-logo.svg" alt="LumaLink logo" className="brand-logo" />
-              <h1 className="brand-name">LumaLink</h1>
+              <img src="/fluxroom-logo.svg" alt="FluxRoom logo" className="brand-logo" />
+              <h1 className="brand-name">FluxRoom</h1>
             </div>
             <p className="entry-subtitle">Enter your name, then choose to host a new room or join one.</p>
 
@@ -1077,8 +1077,8 @@ export default function App({ authRequired = false, authUser = null, getToken = 
             <header className="topbar">
               <div>
                 <div className="brand-lockup brand-lockup-topbar">
-                  <img src="/lumalink-logo.svg" alt="LumaLink logo" className="brand-logo" />
-                  <h1 className="brand-name">LumaLink</h1>
+                  <img src="/fluxroom-logo.svg" alt="FluxRoom logo" className="brand-logo" />
+                  <h1 className="brand-name">FluxRoom</h1>
                 </div>
                 <p>
                   Room: {room} • {participantCount} participant{participantCount === 1 ? "" : "s"} • You are
